@@ -1,0 +1,7 @@
+{
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "npm install --build-from-source",
+    "installDeps": "gcc g++ make python3"
+  }
+}
