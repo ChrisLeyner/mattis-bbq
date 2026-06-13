@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#d32f2f">
+    <title>Matti's BBQ - Sistema de Caja</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        body { 
+            background: #f4f4f4; 
+            font-family: 'Segoe UI', Arial, sans-serif;
+            padding-bottom: 20px;
+        }
+        
+        /* Navbar */
+        .navbar-brand {
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+        
+        /* Tarjetas de productos */
+        .product-card { 
+            background: white; 
+            border-radius: 12px; 
+            padding: 12px; 
+            margin-bottom: 12px; 
+            cursor: pointer; 
+            transition: all 0.2s ease;
+            text-align: center; 
+            border: 1px solid #e0e0e0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .product-card:hover { 
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            border-color: #d32f2f;
+        }
+        
+        .product-card:active { 
+            transform: scale(0.98);
+        }
+        
+        .product-card.out-of-stock { 
+            opacity: 0.5; 
+            background: #f5f5f5; 
+            cursor: not-allowed;
+        }
+        
+        .product-card.out-of-stock:hover {
+            transform: none;
+            border-color: #e0e0e0;
+        }
+        
+        .product-image {
+            width: 70px;
+            height: 70px;
+            margin: 0 auto;
+            object-fit: cover;
+            border-radius: 50%;
+            background: #f8f8f8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .product-name {
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin: 8px 0 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .product-price {
+            color: #d32f2f;
+            font-weight: bold;
+            font-size: 1rem;
+            margin-bottom: 4px;
+        }
+        
+        /* Carrito */
+        .cart-container { 
+            background: white; 
+            border-radius: 12px; 
+            padding: 15px; 
+            position: sticky; 
+            top: 70px; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            border: 1px solid #e0e0e0;
+        }
+        
+        .cart-header {
+            border-bottom: 2px solid #d32f2f;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+        }
+        
+        .cart-item { 
+            border-bottom: 1px solid #eee; 
+            padding: 10px 0;
+            font-size: 0.85rem;
+        }
+        
+        .cart-item:last-child {
+            border-bottom: none;
+        }
+        
+        /* Órdenes pendientes */
+        .order-item { 
+            background: white; 
+            border-radius: 12px; 
+            padding: 12px; 
+            margin-bottom: 12px; 
+            border-left: 4px solid #ffc107; 
+            cursor: pointer; 
+            transition: all 0.2s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .order-item:hover { 
+            background: #f8f9fa; 
+            transform: translateX(5px);
+        }
+        
+        .order-item.selected { 
+            border-left-color: #28a745; 
+            background: #e8f5e9;
+        }
+        
+        /* Badges */
+        .badge-pendiente { background: #ffc107; color: #000; }
+        .badge-preparado { background: #17a2b8; color: #fff; }
+        .badge-entregado { background: #6c757d; color: #fff; }
+        .badge-pagado { background: #28a745; color: #fff; }
+        
+        /* Botones */
+        .btn-danger { background: #d32f2f; border: none; }
+        .btn-danger:hover { background: #b71c1c; }
+        
+        .btn-warning { background: #ffc107; border: none; color: #000; }
+        .btn-warning:hover { background: #e0a800; }
+        
+        /* Modal */
+        .modal-custom {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.95);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        /* Scrollbar personalizado */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #d32f2f;
+            border-radius: 3px;
+        }
+        
+        /* Animaciones */
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .order-item, .product-card {
+            animation: slideIn 0.3s ease;
+        }
+        
+        /* Panel de efectivo */
+        .panel-efectivo {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .product-name { font-size: 0.7rem; }
+            .product-price { font-size: 0.85rem; }
+            .cart-container { position: relative; top: 0; margin-top: 15px; }
+        }
+        /* FORZAR VISIBILIDAD DEL MODAL 
+            .modal-custom {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            z-index: 99999 !important;
+        } 
+
+/* Asegurar que el contenido se vea 
+            .modal-custom .modal-dialog {
+            margin: auto !important;
+            width: 90% !important;
+            max-width: 350px !important;
+        } */
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark sticky-top">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-cash-register"></i> CAJA - MATTI'S B-B-Q
+            </a>
+            <div>
+                <button id="btnCerrarTurno" onclick="cerrarTurno()" class="btn btn-danger btn-sm me-1" style="display: none;">
+                    <i class="fas fa-chart-line"></i> CERRAR TURNO
+                </button>
+                <button onclick="window.open('stock.html', '_blank')">📦 Stock</button>
+
+                <button onclick="window.location.replace('pending-payment.html')" class="btn btn-warning">
+                    💰 ÓRDENES POR COBRAR
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-3">
+        <!-- Modal de apertura de turno -->
+        <div id="modalApertura" class="modal-custom" style="display: none;">
+            <div class="modal-dialog modal-sm" style="margin: 0 auto; width: 90%; max-width: 350px;">
+                <div class="modal-content">
+                    <div class="modal-header bg-dark text-white">
+                        <h6 class="modal-title"><i class="fas fa-key"></i> INICIAR TURNO</h6>
+                    </div>
+                    <div class="modal-body">
+                        <label class="form-label text-white">Fondo inicial (MXN):</label>
+                        <input type="number" id="fondoInicial" class="form-control mb-3 bg-light text-dark" placeholder="0.00" autocomplete="off">
+                        <label class="form-label text-white">Usuario:</label>
+                        <input type="text" id="usuario" class="form-control mb-3 bg-light text-dark" value="Cajera" autocomplete="off">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label text-white">Tipo de cambio (1 USD a MXN):</label>
+                        <input type="number" id="tipoCambio" class="form-control mb-3 bg-light text-dark" value="17.00" step="0.01">
+                    </div>
+
+                    <div class="modal-footer">
+                        <button onclick="abrirCaja()" class="btn btn-danger w-100 fw-bold">
+                            <i class="fas fa-check-circle"></i> ABRIR CAJA
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sección de Ventas (carrito) -->
+        <div id="seccionVentas" style="display: none;">
+            <div class="row">
+                <div class="col-md-8">
+                    <div class="input-group mb-3">
+                        <span class="input-group-text"><i class="fas fa-search"></i></span>
+                        <input type="text" id="search" class="form-control" placeholder="Buscar producto...">
+                        <button class="btn btn-outline-secondary" type="button" onclick="agregarProductoExtra()">
+                        <i class="fas fa-plus-circle"></i> + EXTRA
+                        </button>
+                    </div>
+                    <div id="productsGrid" class="row g-2"></div>
+                </div>
+                <div class="col-md-4">
+                    <div class="cart-container">
+                        <div class="cart-header">
+                            <h6 class="text-center mb-0">
+                                <i class="fas fa-receipt"></i> TICKET DE VENTA
+                            </h6>
+                        </div>
+                        <div id="cartItems" style="max-height: 350px; overflow-y: auto;"></div>
+                        <div class="border-top pt-3 mt-2">
+                            <h5 class="d-flex justify-content-between">
+                                <span>TOTAL:</span>
+                                <span id="cartTotal" class="text-danger fw-bold">$0.00</span>
+                                <small id="tipoCambioInfo" class="text-muted d-block text-center mt-1"></small>
+                            </h5>
+                            <div id="total-usd-info" class="text-center small text-success mt-1" style="display: none;"></div>
+                            <input type="text" id="cliente" class="form-control form-control-sm mb-2" 
+                                   placeholder="Nombre del cliente / Mesa">
+                            
+                            <select id="metodoPago" class="form-select form-select-sm mb-2">
+                                <option value="Efectivo">💵 Efectivo</option>
+                                <option value="USD">🇺🇸 Dólares (USD)</option>
+                                <option value="Tarjeta">💳 Tarjeta</option>
+                                <option value="Transferencia">📱 Transferencia</option>
+                            </select>
+                            
+                            <div id="panelCambio" style="display: none;">
+                                <div class="panel-efectivo">
+                                    <label class="small fw-bold mb-1">
+                                        <i class="fas fa-money-bill"></i> Recibido (MXN):
+                                    </label>
+                                    <input type="number" id="recibido" class="form-control form-control-lg text-center fw-bold" 
+                                           placeholder="0.00" style="font-size: 1.2rem;">
+                                    <div class="d-flex justify-content-between mt-2 pt-2 border-top">
+                                        <span class="fw-bold"><i class="fas fa-exchange-alt"></i> Cambio:</span>
+                                        <span id="cambio" class="fw-bold text-success fs-5">$0.00</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button onclick="procesarPago()" class="btn btn-danger w-100 mb-2 fw-bold py-2">
+                                <i class="fas fa-dollar-sign"></i> COBRAR
+                            </button>
+                            <button onclick="enviarACocinaLocal()" class="btn btn-warning w-100 mb-2 fw-bold py-2">
+                                <i class="fas fa-utensils"></i> ENVIAR A COCINA (Local)
+                            </button>
+                            <button onclick="limpiarCarrito()" class="btn btn-link btn-sm w-100 text-muted">
+                                <i class="fas fa-trash-alt"></i> Limpiar pedido
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sección de Órdenes pendientes de cobro -->
+        <div id="seccionOrdenes" style="display: none;">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0"><i class="fas fa-clock"></i> ÓRDENES PENDIENTES DE COBRO</h5>
+                <button class="btn btn-sm btn-outline-secondary" onclick="cargarOrdenesPendientesCobro()">
+                    <i class="fas fa-sync-alt"></i> Actualizar
+                </button>
+            </div>
+            <div id="ordenesPendientes" class="row"></div>
+        </div>
+    </div>
+
+    <audio id="notificacion" preload="auto">
+        <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg">
+    </audio>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/caja.js"></script>
+</body>
+</html>

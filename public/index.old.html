@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Matti's BBQ - Caja</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f4f4f4; font-family: Arial, sans-serif; }
+        .product-card { background: white; border-radius: 8px; padding: 10px; margin-bottom: 10px; cursor: pointer; transition: 0.2s; text-align: center; }
+        .product-card:hover { transform: scale(0.98); background: #f0f0f0; }
+        .product-card.out-of-stock { opacity: 0.5; background: #ddd; cursor: not-allowed; }
+        .cart-container { background: white; border-radius: 8px; padding: 15px; position: sticky; top: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .cart-item { border-bottom: 1px solid #eee; padding: 8px 0; }
+        .btn-danger { background: #d32f2f; border: none; }
+        .badge-stock { font-size: 10px; }
+    </style>
+</head>
+<body>
+  <nav class="navbar navbar-dark bg-dark sticky-top">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="#">🔥 MATTI'S B-B-Q - CAJA</a>
+        <div>
+            <!-- Botón de cierre de turno (oculto inicialmente) -->
+            <button id="btnCerrarTurno" onclick="cerrarTurno()" class="btn btn-danger btn-sm me-1" style="display: none;">
+                📊 CERRAR TURNO
+            </button>
+            <button class="btn btn-outline-light btn-sm" onclick="location.href='orders.html'">📋 ÓRDENES</button>
+            <button class="btn btn-outline-light btn-sm" onclick="location.href='stock.html'">📦 STOCK</button>
+        </div>
+    </div>
+</nav>
+
+<!-- MODAL DE APERTURA (con fondo más oscuro y sin opción de cerrar) -->
+<div id="modalApertura" class="modal-custom" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 9999;">
+    <div class="modal-dialog modal-sm modal-dialog-centered" style="margin: 15% auto;">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white">
+                <h6 class="modal-title">INICIAR TURNO</h6>
+            </div>
+            <div class="modal-body">
+                <label>Fondo inicial (MXN):</label>
+                <input type="number" id="fondoInicial" class="form-control" placeholder="0.00" autocomplete="off">
+                <label class="mt-2">Usuario:</label>
+                <input type="text" id="usuario" class="form-control" value="Admin" autocomplete="off">
+            </div>
+            <div class="modal-footer">
+                <button onclick="abrirCaja()" class="btn btn-danger w-100 fw-bold">ABRIR CAJA</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+        <div class="row">
+            <!-- Columna de productos -->
+            <div class="col-md-8">
+                <input type="text" id="search" class="form-control mb-2" placeholder="Buscar producto...">
+                <div id="productsGrid" class="row g-2"></div>
+            </div>
+            
+            <!-- Columna del carrito -->
+            <div class="col-md-4">
+                <div class="cart-container">
+                    <h6 class="text-center border-bottom pb-2">TICKET DE VENTA</h6>
+                    <div id="cartItems" style="max-height: 300px; overflow-y: auto;"></div>
+                    <div class="border-top pt-2 mt-2">
+                        <h5 class="d-flex justify-content-between">
+                            TOTAL: <span id="cartTotal" class="text-danger">$0.00</span>
+                        </h5>
+                        <input type="text" id="cliente" class="form-control form-control-sm mb-2" placeholder="Nombre del cliente / Mesa">
+                        <select id="metodoPago" class="form-select form-select-sm mb-2">
+                            <option value="Efectivo">💵 Efectivo</option>
+                            <option value="Tarjeta">💳 Tarjeta</option>
+                            <option value="Transferencia">📱 Transferencia</option>
+                        </select>
+                        <div id="panelCambio" style="display: none;" class="mb-2">
+                            <label>Recibido (MXN):</label>
+                            <input type="number" id="recibido" class="form-control form-control-sm" placeholder="0.00">
+                            <small class="text-muted">Cambio: <span id="cambio">$0.00</span></small>
+                        </div>
+                        <button onclick="procesarPago()" class="btn btn-danger w-100 mb-2">💰 COBRAR</button>
+                        <button onclick="enviarACocina()" class="btn btn-warning w-100 mb-2">👨‍🍳 ENVIAR A COCINA</button>
+                        <button onclick="limpiarCarrito()" class="btn btn-link btn-sm w-100 text-muted">Limpiar pedido</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <audio id="notificacion" preload="auto">
+        <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3">
+    </audio>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/main.js"></script>
+</body>
+</html>

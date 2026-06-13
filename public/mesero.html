@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Matti's BBQ - Mesero</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f4f4f4; padding-bottom: 100px; }
+        .product-card { background: white; border-radius: 12px; padding: 10px; margin-bottom: 10px; cursor: pointer; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); transition: 0.1s; }
+        .product-card:active { transform: scale(0.97); background: #f0f0f0; }
+        .cart-preview { background: white; border-radius: 12px 12px 0 0; padding: 15px; position: fixed; bottom: 0; left: 0; right: 0; box-shadow: 0 -2px 10px rgba(0,0,0,0.1); z-index: 1000; }
+        .cart-item { border-bottom: 1px solid #eee; padding: 8px 0; }
+        .btn-extra { background: #ffc107; color: #000; border: none; }
+        .btn-extra:active { transform: scale(0.95); }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark sticky-top">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">👨‍🍳 MESERO - MATTI'S B-B-Q</a>
+            <button class="btn btn-outline-light btn-sm" onclick="location.href='/'">⬅ Caja</button>
+        </div>
+    </nav>
+
+    <div class="container mt-3 pb-5">
+        <div class="row">
+            <div class="col-12">
+                <input type="text" id="mesa" class="form-control form-control-lg mb-3" placeholder="Número de Mesa / Cliente">
+                
+                <div class="input-group mb-3">
+                    <span class="input-group-text">🔍</span>
+                    <input type="text" id="buscarProducto" class="form-control" placeholder="Buscar producto...">
+                    <button class="btn btn-warning" type="button" onclick="agregarProductoExtra()">
+                        ➕ + EXTRA
+                    </button>
+                </div>
+                
+                <div id="productosMesero" class="row g-2 mb-5"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="cart-preview">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong>🛒 PEDIDO ACTUAL</strong>
+                <button class="btn btn-sm btn-outline-danger" onclick="limpiarCarrito()">Limpiar</button>
+            </div>
+            <div id="listaCarrito" style="max-height: 150px; overflow-y: auto;">
+                <p class="text-muted text-center">Vacío</p>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-2">
+                <strong class="text-danger fs-5" id="totalPreview">$0.00</strong>
+                <button onclick="enviarPedido()" class="btn btn-danger">ENVIAR A COCINA</button>
+            </div>
+        </div>
+    </div>
+
+    <audio id="notificacion" preload="auto">
+        <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3">
+    </audio>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/mesero.js"></script>
+</body>
+</html>
