@@ -1,8 +1,11 @@
 {
-  "investigate": {
-    "packages": [
-      "python3",
-      "nodejs"
-    ]
+  "$schema": "https://schema.railpack.com",
+  "steps": {
+    "install": {
+      "env": {
+        "RAILPACK_PACKAGES": "python@3.11",
+        "RAILPACK_BUILD_APT_PACKAGES": "build-essential"
+      }
+    }
   }
 }
