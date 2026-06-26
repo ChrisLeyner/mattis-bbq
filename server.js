@@ -347,3 +347,70 @@ const getLocalIp = () => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🔥 Servidor en http://${getLocalIp()}:${PORT}`);
 });
+
+// ==================== RESPALDO DE BASE DE DATOS ====================
+// Información de la base de datos
+app.get('/admin/backup-info', (req, res) => {
+    try {
+        const fs = require('fs');
+        const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'database.sqlite');
+        const stats = fs.statSync(dbPath);
+        res.json({
+            size: stats.size,
+            size_mb: (stats.size / 1024 / 1024).toFixed(2),
+            modified: stats.mtime,
+            db_path: dbPath
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Descargar respaldo
+app.get('/admin/backup', (req, res) => {
+    try {
+        const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'database.sqlite');
+        const fecha = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
+        const nombreArchivo = `respaldo_mattis_${fecha}.sqlite`;
+        res.download(dbPath, nombreArchivo);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Restaurar respaldo
+const multer = require('multer');
+const upload = multer({ dest: 'uploads/' });
+
+app.post('/admin/restore', upload.single('backup'), (req, res) => {
+    try {
+        const fs = require('fs');
+        const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'database.sqlite');
+        
+        if (!req.file) {
+            return res.json({ success: false, message: 'No se recibió ningún archivo' });
+        }
+        
+        // Verificar que sea un archivo .sqlite válido
+        const fileBuffer = fs.readFileSync(req.file.path);
+        if (!fileBuffer.slice(0, 15).toString().includes('SQLite')) {
+            fs.unlinkSync(req.file.path);
+            return res.json({ success: false, message: 'El archivo no es una base de datos SQLite válida' });
+        }
+        
+        // Hacer respaldo automático antes de restaurar
+        const backupPath = `${dbPath}.backup_${Date.now()}`;
+        fs.copyFileSync(dbPath, backupPath);
+        
+        // Restaurar el respaldo
+        fs.copyFileSync(req.file.path, dbPath);
+        
+        // Limpiar archivo temporal
+        fs.unlinkSync(req.file.path);
+        
+        res.json({ success: true, message: 'Base de datos restaurada correctamente' });
+    } catch (err) {
+        console.error('Error al restaurar:', err);
+        res.json({ success: false, message: err.message });
+    }
+});
