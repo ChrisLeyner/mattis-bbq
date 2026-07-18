@@ -13,9 +13,6 @@
         .payment-option { cursor: pointer; padding: 5px; text-align: center; border-radius: 5px; border: 1px solid #ddd; margin: 2px; }
         .payment-active { background: #d32f2f; color: white; border-color: #d32f2f; }
         .panel-cambio { background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 10px; margin-top: 10px; }
-        .btn-connect { background: #6c757d; color: white; border: none; }
-        .btn-connect:hover { background: #5a6268; }
-        .btn-connect.connected { background: #28a745; }
     </style>
 </head>
 <body>
@@ -23,16 +20,27 @@
         <div class="container-fluid">
             <a class="navbar-brand" href="/">💰 COBROS PENDIENTES - MATTI'S BBQ</a>
             <div>
-                <button id="btnConectarImpresora" onclick="window.conectarImpresora()" class="btn btn-secondary btn-sm">
+                <button id="btnConectarImpresora" onclick="window.conectarImpresora()" class="btn btn-secondary btn-sm me-1">
                     <i class="fas fa-bluetooth"></i> IMPRESORA
                 </button>
                 <button class="btn btn-outline-light btn-sm" onclick="location.href='/'">⬅ Volver</button>
             </div>
         </div>
     </nav>
+    
     <div class="container mt-3">
-        <div class="row" id="ordersList">Cargando órdenes pendientes...</div>
+        <div class="row" id="ordersList">
+            <div class="text-center p-5">Cargando órdenes pendientes...</div>
+        </div>
     </div>
+
+    <!-- Modal de cobro -->
+    <div id="modalCobro" style="display:none; position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:10000;display:none;align-items:center;justify-content:center;">
+        <div class="bg-white rounded p-4" style="width: 90%; max-width: 400px;" id="modalContent">
+            <!-- Contenido dinámico -->
+        </div>
+    </div>
+
     <audio id="notificacion" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
     
     <script src="/socket.io/socket.io.js"></script>
@@ -44,22 +52,36 @@
         let metodoPago = "Efectivo";
         let totalOrden = 0;
 
+        console.log('🚀 pending-payment inicializado');
+
         // ==================== CARGAR ÓRDENES ====================
         async function cargarPendientes() {
+            console.log('🔄 Cargando órdenes pendientes...');
             try {
                 const res = await fetch('/api/orders/pending-payment');
+                console.log('📦 Respuesta recibida, status:', res.status);
                 const orders = await res.json();
+                console.log('📋 Órdenes cargadas:', orders.length);
                 renderizar(orders);
-            } catch (error) { console.error(error); }
+            } catch (error) {
+                console.error('❌ Error cargando órdenes:', error);
+                document.getElementById('ordersList').innerHTML = `
+                    <div class="col-12 text-center text-danger p-5">
+                        ❌ Error al cargar órdenes: ${error.message}<br>
+                        <button class="btn btn-primary mt-2" onclick="cargarPendientes()">Reintentar</button>
+                    </div>
+                `;
+            }
         }
 
         // ==================== RENDERIZAR ====================
         function renderizar(orders) {
             const container = document.getElementById('ordersList');
-            if (!orders.length) {
+            if (!orders || orders.length === 0) {
                 container.innerHTML = '<div class="col-12 text-center p-5 text-muted">No hay órdenes pendientes de cobro</div>';
                 return;
             }
+            
             container.innerHTML = orders.map(order => {
                 let items = [];
                 try { items = JSON.parse(order.items || '[]'); } catch(e) {}
@@ -102,37 +124,25 @@
         }
 
         function mostrarPanelCobro() {
-            let modal = document.getElementById('modalCobro');
-            if (!modal) {
-                modal = document.createElement('div');
-                modal.id = 'modalCobro';
-                modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:10000;display:flex;align-items:center;justify-content:center;';
-                document.body.appendChild(modal);
-            }
-            actualizarPanelCobro();
-            modal.style.display = 'flex';
-        }
-
-        function actualizarPanelCobro() {
             const modal = document.getElementById('modalCobro');
-            if (!modal) return;
+            const content = document.getElementById('modalContent');
             const totalMXN = totalOrden;
             const usdEquivalente = totalMXN / tipoCambioUSD;
-            modal.innerHTML = `
-                <div class="bg-white rounded p-4" style="width: 90%; max-width: 400px;">
-                    <h5 class="text-center mb-3">Cobrar orden</h5>
-                    <p><strong>Total a pagar:</strong> $${totalMXN.toFixed(2)} MXN (≈ $${usdEquivalente.toFixed(2)} USD)</p>
-                    <div class="d-flex gap-2 mb-3">
-                        <div class="flex-grow-1 payment-option ${metodoPago === 'Efectivo' ? 'payment-active' : ''}" onclick="setMetodo('Efectivo', this)">💵 Efectivo</div>
-                        <div class="flex-grow-1 payment-option ${metodoPago === 'USD' ? 'payment-active' : ''}" onclick="setMetodo('USD', this)">🇺🇸 Dólares</div>
-                        <div class="flex-grow-1 payment-option ${metodoPago === 'Tarjeta' ? 'payment-active' : ''}" onclick="setMetodo('Tarjeta', this)">💳 Tarjeta</div>
-                        <div class="flex-grow-1 payment-option ${metodoPago === 'Transferencia' ? 'payment-active' : ''}" onclick="setMetodo('Transferencia', this)">📱 Transf.</div>
-                    </div>
-                    <div id="panelCambioCobro" class="panel-cambio"></div>
-                    <div class="d-grid gap-2 mt-3">
-                        <button onclick="confirmarCobro()" class="btn btn-danger">COBRAR</button>
-                        <button onclick="cerrarModalCobro()" class="btn btn-secondary">Cancelar</button>
-                    </div>
+            
+            modal.style.display = 'flex';
+            content.innerHTML = `
+                <h5 class="text-center mb-3">Cobrar orden</h5>
+                <p><strong>Total a pagar:</strong> $${totalMXN.toFixed(2)} MXN (≈ $${usdEquivalente.toFixed(2)} USD)</p>
+                <div class="d-flex gap-2 mb-3">
+                    <div class="flex-grow-1 payment-option ${metodoPago === 'Efectivo' ? 'payment-active' : ''}" onclick="setMetodo('Efectivo', this)">💵 Efectivo</div>
+                    <div class="flex-grow-1 payment-option ${metodoPago === 'USD' ? 'payment-active' : ''}" onclick="setMetodo('USD', this)">🇺🇸 Dólares</div>
+                    <div class="flex-grow-1 payment-option ${metodoPago === 'Tarjeta' ? 'payment-active' : ''}" onclick="setMetodo('Tarjeta', this)">💳 Tarjeta</div>
+                    <div class="flex-grow-1 payment-option ${metodoPago === 'Transferencia' ? 'payment-active' : ''}" onclick="setMetodo('Transferencia', this)">📱 Transf.</div>
+                </div>
+                <div id="panelCambioCobro" class="panel-cambio"></div>
+                <div class="d-grid gap-2 mt-3">
+                    <button onclick="confirmarCobro()" class="btn btn-danger">COBRAR</button>
+                    <button onclick="cerrarModalCobro()" class="btn btn-secondary">Cancelar</button>
                 </div>
             `;
             actualizarPanelCambio();
@@ -140,7 +150,7 @@
 
         function setMetodo(metodo, elemento) {
             metodoPago = metodo;
-            document.querySelectorAll('#modalCobro .payment-option').forEach(opt => opt.classList.remove('payment-active'));
+            document.querySelectorAll('#modalContent .payment-option').forEach(opt => opt.classList.remove('payment-active'));
             elemento.classList.add('payment-active');
             actualizarPanelCambio();
         }
@@ -184,11 +194,10 @@
             }
         }
 
-        // ==================== CONFIRMAR COBRO CON TICKET ====================
+        // ==================== CONFIRMAR COBRO ====================
         async function confirmarCobro() {
             const totalMXN = totalOrden;
             
-            // Validar monto según método
             if (metodoPago === 'Efectivo') {
                 const recibido = parseFloat(document.getElementById('recibido-mxn')?.value) || 0;
                 if (recibido < totalMXN) {
@@ -211,7 +220,6 @@
             }
 
             try {
-                // Marcar como pagado
                 const response = await fetch(`/api/orders/${ordenSeleccionada}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
@@ -226,17 +234,18 @@
                 if (response.ok && data.success) {
                     mostrarNotificacion('✅ Cobro exitoso', 'success');
                     cerrarModalCobro();
+                    cargarPendientes();
                     
-                    // Cargar orden al carrito para imprimir
-                    await cargarOrdenAlCarrito(ordenSeleccionada);
-                    
-                    // Imprimir ticket y abrir caja
-                    const impreso = await window.imprimirTicketAutomatico();
-                    if (impreso) {
-                        await window.abrirCajaDespuesDeCobro();
+                    // Intentar imprimir ticket
+                    try {
+                        const impreso = await window.imprimirTicketAutomatico();
+                        if (impreso) {
+                            await window.abrirCajaDespuesDeCobro();
+                        }
+                    } catch (e) {
+                        console.warn('Error imprimiendo:', e);
                     }
                     
-                    cargarPendientes();
                     socket.emit('estado-actualizado', { orderId: ordenSeleccionada, estado: 'pagado' });
                 } else {
                     alert('❌ Error: ' + (data.error || 'desconocido'));
@@ -244,34 +253,6 @@
             } catch (error) {
                 console.error(error);
                 alert('❌ Error de conexión');
-            }
-        }
-
-        // ==================== CARGAR ORDEN AL CARRITO (para imprimir) ====================
-        async function cargarOrdenAlCarrito(orderId) {
-            try {
-                const response = await fetch(`/api/orders/${orderId}`);
-                const order = await response.json();
-                if (order) {
-                    // Crear carrito temporal en window
-                    window.carrito = [];
-                    let items = [];
-                    try { items = JSON.parse(order.items || '[]'); } catch(e) {}
-                    items.forEach(item => {
-                        window.carrito.push({
-                            id: item.product_id || Date.now(),
-                            nombre: item.nombre,
-                            precio: item.precio_unitario || item.precio || 0,
-                            cantidad: item.cantidad
-                        });
-                    });
-                    // Guardar cliente para el ticket
-                    if (order.cliente) {
-                        document.getElementById('cliente')?.value = order.cliente;
-                    }
-                }
-            } catch (error) {
-                console.error('Error cargando orden:', error);
             }
         }
 
@@ -302,10 +283,20 @@
             setTimeout(() => div.remove(), 3000);
         }
 
-        // ==================== EVENTOS SOCKET ====================
-        socket.on('estado-actualizado', () => cargarPendientes());
+        // ==================== SOCKET EVENTS ====================
+        socket.on('estado-actualizado', () => {
+            console.log('📨 evento estado-actualizado recibido');
+            cargarPendientes();
+        });
+        socket.on('orden-pagada', () => {
+            console.log('📨 evento orden-pagada recibido');
+            cargarPendientes();
+        });
+
+        // ==================== INICIO ====================
         cargarPendientes();
         setInterval(cargarPendientes, 10000);
+        console.log('✅ pending-payment listo');
     </script>
 </body>
 </html>

@@ -443,6 +443,8 @@ function configurarCaja(portPath) {
         drawerPort.open((err) => {
             if (err) {
                 console.log('⚠️ No se pudo conectar a la caja:', err.message);
+                console.log('💡 Asegúrate de que la caja esté conectada en el puerto:', portPath);
+                console.log('💡 En Windows usa COM3, COM4, etc. En Linux usa /dev/ttyUSB0');
             }
         });
         return true;
@@ -454,15 +456,25 @@ function configurarCaja(portPath) {
 
 // Abrir caja
 function abrirCajaRegistradora() {
-    if (!drawerPort || !drawerPort.isOpen) {
-        const port = process.env.CAJA_PORT || 'COM3';
-        configurarCaja(port);
+    // Intentar diferentes puertos comunes si no está configurado
+    const puertos = process.env.CAJA_PORT ? [process.env.CAJA_PORT] : ['COM3', 'COM4', 'COM5', '/dev/ttyUSB0', '/dev/ttyS0'];
+    
+    for (const port of puertos) {
         if (!drawerPort || !drawerPort.isOpen) {
-            return false;
+            configurarCaja(port);
+        }
+        if (drawerPort && drawerPort.isOpen) {
+            break;
         }
     }
+    
+    if (!drawerPort || !drawerPort.isOpen) {
+        console.log('⚠️ No se pudo conectar a la caja en ningún puerto');
+        return false;
+    }
+
     try {
-        // Comando ESC/POS para abrir cajón (Epson, muchas marcas lo usan)
+        // Comando ESC/POS para abrir cajón (estándar para muchas impresoras)
         const comando = Buffer.from([0x1B, 0x70, 0x00, 0x19, 0xFA]);
         drawerPort.write(comando);
         console.log('💰 Caja registradora abierta');
@@ -473,8 +485,42 @@ function abrirCajaRegistradora() {
     }
 }
 
-// Endpoint para abrir caja
+// Endpoint para abrir caja (con más información)
 app.post('/api/cash/drawer/open', (req, res) => {
+    console.log('📨 Solicitud de apertura de caja recibida');
     const success = abrirCajaRegistradora();
-    res.json({ success });
+    res.json({ 
+        success: success, 
+        message: success ? 'Caja abierta' : 'No se pudo abrir la caja',
+        port: process.env.CAJA_PORT || 'auto-detect'
+    });
+});
+
+// Endpoint para probar la caja
+app.get('/api/cash/drawer/test', (req, res) => {
+    const puertos = ['COM3', 'COM4', 'COM5', '/dev/ttyUSB0', '/dev/ttyS0'];
+    const resultados = [];
+    
+    for (const port of puertos) {
+        try {
+            const testPort = new SerialPort({ path: port, baudRate: 9600, autoOpen: false });
+            testPort.open((err) => {
+                if (err) {
+                    resultados.push({ port, disponible: false, error: err.message });
+                } else {
+                    testPort.close();
+                    resultados.push({ port, disponible: true });
+                }
+            });
+        } catch (e) {
+            resultados.push({ port, disponible: false, error: e.message });
+        }
+    }
+    
+    setTimeout(() => {
+        res.json({ 
+            puertos_detectados: resultados,
+            puerto_configurado: process.env.CAJA_PORT || 'no configurado'
+        });
+    }, 1000);
 });
