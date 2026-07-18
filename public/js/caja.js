@@ -1,9 +1,17 @@
 let productos = [];
 let carrito = [];
+// Hacer carrito accesible globalmente para printing.js
+window.carrito = carrito;
 let socket = io();
 let turnoAbierto = false;
 let ordenSeleccionada = null;
 let tipoCambioUSD = localStorage.getItem('tipoCambioUSD') ? parseFloat(localStorage.getItem('tipoCambioUSD')) : 17.00;
+
+// Al cargar, verificar conexión de impresora
+document.addEventListener('DOMContentLoaded', () => {
+    verificarConexionImpresora();
+    // ... resto del código existente
+});
 
 // ========== INICIALIZACIÓN ==========
 document.addEventListener('DOMContentLoaded', () => {
@@ -159,6 +167,7 @@ function agregarAlCarrito(id) {
     }
     actualizarCarrito();
     mostrarNotificacion(`✓ ${producto.nombre} agregado`, 'success');
+    window.carrito = carrito;
 }
 
 function actualizarCarrito() {
@@ -197,6 +206,7 @@ function actualizarCarrito() {
 function eliminarDelCarrito(id) {
     carrito = carrito.filter(item => item.id !== id);
     actualizarCarrito();
+    window.carrito = carrito;
 }
 
 function limpiarCarrito() {
@@ -204,6 +214,7 @@ function limpiarCarrito() {
     const clienteInput = document.getElementById('cliente');
     if (clienteInput) clienteInput.value = '';
     actualizarCarrito();
+    window.carrito = carrito;
 }
 
 // ========== AGREGAR PRODUCTO EXTRA ==========
@@ -379,6 +390,7 @@ async function cargarOrdenAlCarrito(orderId) {
         console.error('Error:', error);
         mostrarNotificacion('❌ Error al cargar orden', 'danger');
     }
+    window.carrito = carrito;
 }
 
 // ========== PROCESAR PAGO ==========
@@ -471,6 +483,9 @@ async function procesarPago() {
                 mostrarNotificacion(`✅ Venta para llevar cobrada: ${result.order.order_number}`, 'success');
                 limpiarCarrito();
                 cargarProductos();
+                if (result.success) {
+                    // Ya se imprime desde cobrarConTicket()
+                }
             } else {
                 mostrarNotificacion('❌ Error al crear venta', 'danger');
             }

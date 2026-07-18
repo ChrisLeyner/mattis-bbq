@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Matti's BBQ - Cobros pendientes</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         body { background: #f4f4f4; padding-bottom: 20px; }
         .order-card { background: white; border-radius: 12px; padding: 15px; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 5px solid #ffc107; }
@@ -12,20 +13,30 @@
         .payment-option { cursor: pointer; padding: 5px; text-align: center; border-radius: 5px; border: 1px solid #ddd; margin: 2px; }
         .payment-active { background: #d32f2f; color: white; border-color: #d32f2f; }
         .panel-cambio { background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 10px; margin-top: 10px; }
+        .btn-connect { background: #6c757d; color: white; border: none; }
+        .btn-connect:hover { background: #5a6268; }
+        .btn-connect.connected { background: #28a745; }
     </style>
 </head>
 <body>
     <nav class="navbar navbar-dark bg-dark">
         <div class="container-fluid">
             <a class="navbar-brand" href="/">💰 COBROS PENDIENTES - MATTI'S BBQ</a>
-            <button class="btn btn-outline-light btn-sm" onclick="location.href='/'">⬅ Volver a Caja</button>
+            <div>
+                <button id="btnConectarImpresora" onclick="window.conectarImpresora()" class="btn btn-secondary btn-sm">
+                    <i class="fas fa-bluetooth"></i> IMPRESORA
+                </button>
+                <button class="btn btn-outline-light btn-sm" onclick="location.href='/'">⬅ Volver</button>
+            </div>
         </div>
     </nav>
     <div class="container mt-3">
         <div class="row" id="ordersList">Cargando órdenes pendientes...</div>
     </div>
     <audio id="notificacion" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
+    
     <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/printing.js"></script>
     <script>
         let socket = io();
         let tipoCambioUSD = localStorage.getItem('tipoCambioUSD') ? parseFloat(localStorage.getItem('tipoCambioUSD')) : 17.00;
@@ -33,6 +44,7 @@
         let metodoPago = "Efectivo";
         let totalOrden = 0;
 
+        // ==================== CARGAR ÓRDENES ====================
         async function cargarPendientes() {
             try {
                 const res = await fetch('/api/orders/pending-payment');
@@ -41,6 +53,7 @@
             } catch (error) { console.error(error); }
         }
 
+        // ==================== RENDERIZAR ====================
         function renderizar(orders) {
             const container = document.getElementById('ordersList');
             if (!orders.length) {
@@ -50,7 +63,6 @@
             container.innerHTML = orders.map(order => {
                 let items = [];
                 try { items = JSON.parse(order.items || '[]'); } catch(e) {}
-                // Asegurar que cada item tenga precio_unitario o subtotal para evitar NaN
                 items.forEach(item => {
                     item.precio_unitario = item.precio_unitario || (item.subtotal / item.cantidad) || 0;
                 });
@@ -82,7 +94,7 @@
             cargarPendientes();
         }
 
-        // Mostrar modal o panel para cobrar (usamos un div flotante)
+        // ==================== MODAL DE COBRO ====================
         function iniciarCobro(orderId, total) {
             ordenSeleccionada = orderId;
             totalOrden = total;
@@ -94,7 +106,6 @@
             if (!modal) {
                 modal = document.createElement('div');
                 modal.id = 'modalCobro';
-                modal.className = 'modal-custom';
                 modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:10000;display:flex;align-items:center;justify-content:center;';
                 document.body.appendChild(modal);
             }
@@ -173,8 +184,10 @@
             }
         }
 
+        // ==================== CONFIRMAR COBRO CON TICKET ====================
         async function confirmarCobro() {
             const totalMXN = totalOrden;
+            
             // Validar monto según método
             if (metodoPago === 'Efectivo') {
                 const recibido = parseFloat(document.getElementById('recibido-mxn')?.value) || 0;
@@ -198,20 +211,32 @@
             }
 
             try {
+                // Marcar como pagado
                 const response = await fetch(`/api/orders/${ordenSeleccionada}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         estado: 'pagado',
                         metodo_pago: metodoReal,
-                        total_usd: total_usd   // guardamos el monto en USD cobrado (solo si aplica)
+                        total_usd: total_usd
                     })
                 });
                 const data = await response.json();
+                
                 if (response.ok && data.success) {
-                    alert(`✅ Cobro exitoso con ${metodoPago}`);
+                    mostrarNotificacion('✅ Cobro exitoso', 'success');
                     cerrarModalCobro();
-                    cargarPendientes(); // recargar lista
+                    
+                    // Cargar orden al carrito para imprimir
+                    await cargarOrdenAlCarrito(ordenSeleccionada);
+                    
+                    // Imprimir ticket y abrir caja
+                    const impreso = await window.imprimirTicketAutomatico();
+                    if (impreso) {
+                        await window.abrirCajaDespuesDeCobro();
+                    }
+                    
+                    cargarPendientes();
                     socket.emit('estado-actualizado', { orderId: ordenSeleccionada, estado: 'pagado' });
                 } else {
                     alert('❌ Error: ' + (data.error || 'desconocido'));
@@ -222,6 +247,35 @@
             }
         }
 
+        // ==================== CARGAR ORDEN AL CARRITO (para imprimir) ====================
+        async function cargarOrdenAlCarrito(orderId) {
+            try {
+                const response = await fetch(`/api/orders/${orderId}`);
+                const order = await response.json();
+                if (order) {
+                    // Crear carrito temporal en window
+                    window.carrito = [];
+                    let items = [];
+                    try { items = JSON.parse(order.items || '[]'); } catch(e) {}
+                    items.forEach(item => {
+                        window.carrito.push({
+                            id: item.product_id || Date.now(),
+                            nombre: item.nombre,
+                            precio: item.precio_unitario || item.precio || 0,
+                            cantidad: item.cantidad
+                        });
+                    });
+                    // Guardar cliente para el ticket
+                    if (order.cliente) {
+                        document.getElementById('cliente')?.value = order.cliente;
+                    }
+                }
+            } catch (error) {
+                console.error('Error cargando orden:', error);
+            }
+        }
+
+        // ==================== UTILIDADES ====================
         function cerrarModalCobro() {
             const modal = document.getElementById('modalCobro');
             if (modal) modal.style.display = 'none';
@@ -239,6 +293,16 @@
             });
         }
 
+        function mostrarNotificacion(mensaje, tipo) {
+            const div = document.createElement('div');
+            div.className = `alert alert-${tipo} position-fixed top-0 end-0 m-3 shadow`;
+            div.style.zIndex = '9999';
+            div.innerHTML = mensaje;
+            document.body.appendChild(div);
+            setTimeout(() => div.remove(), 3000);
+        }
+
+        // ==================== EVENTOS SOCKET ====================
         socket.on('estado-actualizado', () => cargarPendientes());
         cargarPendientes();
         setInterval(cargarPendientes, 10000);

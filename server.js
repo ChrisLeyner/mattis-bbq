@@ -414,3 +414,67 @@ app.post('/admin/restore', upload.single('backup'), (req, res) => {
         res.json({ success: false, message: err.message });
     }
 });
+
+// ==================== CAJA REGISTRADORA ====================
+const { SerialPort } = require('serialport');
+
+let drawerPort = null;
+
+// Configurar caja
+function configurarCaja(portPath) {
+    try {
+        drawerPort = new SerialPort({
+            path: portPath,
+            baudRate: 9600,
+            dataBits: 8,
+            parity: 'none',
+            stopBits: 1,
+            autoOpen: false
+        });
+
+        drawerPort.on('open', () => {
+            console.log('✅ Caja registradora conectada en:', portPath);
+        });
+
+        drawerPort.on('error', (err) => {
+            console.error('❌ Error en caja:', err.message);
+        });
+
+        drawerPort.open((err) => {
+            if (err) {
+                console.log('⚠️ No se pudo conectar a la caja:', err.message);
+            }
+        });
+        return true;
+    } catch (error) {
+        console.log('⚠️ Error configurando caja:', error.message);
+        return false;
+    }
+}
+
+// Abrir caja
+function abrirCajaRegistradora() {
+    if (!drawerPort || !drawerPort.isOpen) {
+        const port = process.env.CAJA_PORT || 'COM3';
+        configurarCaja(port);
+        if (!drawerPort || !drawerPort.isOpen) {
+            return false;
+        }
+    }
+    try {
+        // Comando ESC/POS para abrir cajón (Epson, muchas marcas lo usan)
+        const comando = Buffer.from([0x1B, 0x70, 0x00, 0x19, 0xFA]);
+        drawerPort.write(comando);
+        console.log('💰 Caja registradora abierta');
+        return true;
+    } catch (error) {
+        console.error('❌ Error abriendo caja:', error.message);
+        return false;
+    }
+}
+
+// Endpoint para abrir caja
+app.post('/api/cash/drawer/open', (req, res) => {
+    const success = abrirCajaRegistradora();
+    res.json({ success });
+});
