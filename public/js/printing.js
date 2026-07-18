@@ -1,8 +1,9 @@
 // ==================== VARIABLES GLOBALES ====================
-let bluetoothDevice = null;
-let bluetoothCharacteristic = null;
-let impresoraConectada = false;
-let modoSimulacion = false;
+// Usar var en lugar de let para evitar conflictos con caja.js
+var bluetoothDeviceGlobal = null;
+var bluetoothCharacteristicGlobal = null;
+var impresoraConectadaGlobal = false;
+var modoSimulacionGlobal = false;
 
 // ==================== DETECCIÓN DE ENTORNO ====================
 function isLocalhost() {
@@ -27,8 +28,8 @@ function verificarCompatibilidadBluetooth() {
 
 // ==================== ACTIVAR MODO SIMULACIÓN ====================
 function activarModoSimulacion() {
-    modoSimulacion = true;
-    impresoraConectada = true;
+    modoSimulacionGlobal = true;
+    impresoraConectadaGlobal = true;
     localStorage.setItem('impresoraConectada', 'true');
     localStorage.setItem('impresoraSimulacion', 'true');
     
@@ -42,6 +43,20 @@ function activarModoSimulacion() {
     console.log('📱 MODO SIMULACIÓN ACTIVADO');
 }
 
+// ==================== VERIFICAR CONEXIÓN (FUNCIÓN GLOBAL) ====================
+function verificarConexionImpresora() {
+    const conectada = localStorage.getItem('impresoraConectada') === 'true';
+    const nombre = localStorage.getItem('impresoraNombre') || 'Impresora';
+    impresoraConectadaGlobal = conectada;
+    
+    const btn = document.getElementById('btnConectarImpresora');
+    if (btn && conectada) {
+        btn.innerHTML = `<i class="fas fa-bluetooth"></i> ${nombre} ✅`;
+        btn.className = 'btn btn-success w-100 mb-2 fw-bold py-2';
+    }
+    return conectada;
+}
+
 // ==================== INICIALIZACIÓN ====================
 document.addEventListener('DOMContentLoaded', () => {
     console.log('🔄 Inicializando módulo de impresión...');
@@ -52,7 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
     
-    // Verificar si estamos en localhost o entorno sin Bluetooth
+    // Verificar si estamos en localhost
     if (isLocalhost()) {
         console.log('⚠️ Entorno localhost detectado - Activando modo simulación automático');
         activarModoSimulacion();
@@ -66,23 +81,13 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
     
-    // Intentar reconectar si había conexión previa
-    const conectada = localStorage.getItem('impresoraConectada') === 'true';
-    if (conectada) {
-        impresoraConectada = true;
-        const nombre = localStorage.getItem('impresoraNombre') || 'Impresora';
-        const btn = document.getElementById('btnConectarImpresora');
-        if (btn) {
-            btn.innerHTML = `<i class="fas fa-bluetooth"></i> ${nombre} ✅`;
-            btn.className = 'btn btn-success w-100 mb-2 fw-bold py-2';
-        }
-    }
+    verificarConexionImpresora();
 });
 
 // ==================== CONECTAR IMPRESORA REAL ====================
 async function conectarImpresora() {
     // Si ya estamos en modo simulación
-    if (modoSimulacion || localStorage.getItem('impresoraSimulacion') === 'true') {
+    if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
         mostrarNotificacion('📱 Modo simulación activo. No se necesita conectar impresora real.', 'info');
         return true;
     }
@@ -97,35 +102,39 @@ async function conectarImpresora() {
     try {
         mostrarNotificacion('🔍 Buscando impresora Bluetooth...', 'info');
         
-        bluetoothDevice = await navigator.bluetooth.requestDevice({
+        // Buscar impresoras Bluetooth (servicio ESC/POS)
+        const device = await navigator.bluetooth.requestDevice({
             filters: [
                 { services: ['000018f0-0000-1000-8000-00805f9b34fb'] }
             ],
             optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
         });
         
+        bluetoothDeviceGlobal = device;
+        
         mostrarNotificacion('✅ Conectando...', 'info');
         
-        const server = await bluetoothDevice.gatt.connect();
+        const server = await device.gatt.connect();
         const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
-        bluetoothCharacteristic = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+        const characteristic = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+        bluetoothCharacteristicGlobal = characteristic;
         
-        impresoraConectada = true;
+        impresoraConectadaGlobal = true;
         localStorage.setItem('impresoraConectada', 'true');
-        localStorage.setItem('impresoraNombre', bluetoothDevice.name || 'Impresora');
+        localStorage.setItem('impresoraNombre', device.name || 'Impresora');
         
         const btn = document.getElementById('btnConectarImpresora');
         if (btn) {
-            btn.innerHTML = `<i class="fas fa-bluetooth"></i> ${bluetoothDevice.name || 'Conectada'} ✅`;
+            btn.innerHTML = `<i class="fas fa-bluetooth"></i> ${device.name || 'Conectada'} ✅`;
             btn.className = 'btn btn-success w-100 mb-2 fw-bold py-2';
         }
         
-        mostrarNotificacion(`✅ Impresora "${bluetoothDevice.name || 'Conectada'}" lista`, 'success');
+        mostrarNotificacion(`✅ Impresora "${device.name || 'Conectada'}" lista`, 'success');
         return true;
         
     } catch (error) {
         console.error('Error Bluetooth:', error);
-        impresoraConectada = false;
+        impresoraConectadaGlobal = false;
         localStorage.removeItem('impresoraConectada');
         
         let mensaje = 'Error al conectar: ';
@@ -180,6 +189,7 @@ function construirTicket(cliente, metodoPago, total) {
 
 // ==================== IMPRIMIR TICKET ====================
 async function imprimirTicketAutomatico() {
+    // Verificar que hay productos en el carrito
     if (!window.carrito || window.carrito.length === 0) {
         console.log('⚠️ No hay productos para imprimir');
         return false;
@@ -190,7 +200,7 @@ async function imprimirTicketAutomatico() {
     const total = window.carrito.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
     
     // Si estamos en modo simulación
-    if (modoSimulacion || localStorage.getItem('impresoraSimulacion') === 'true') {
+    if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
         const ticket = construirTicket(cliente, metodoPago, total);
         console.log('📄 TICKET IMPRESO (SIMULACIÓN)');
         console.log('='.repeat(40));
@@ -201,7 +211,7 @@ async function imprimirTicketAutomatico() {
     }
     
     // Verificar conexión real
-    if (!impresoraConectada || !bluetoothCharacteristic) {
+    if (!impresoraConectadaGlobal || !bluetoothCharacteristicGlobal) {
         const conectado = await conectarImpresora();
         if (!conectado) {
             mostrarNotificacion('⚠️ Conecta la impresora primero o activa modo simulación', 'warning');
@@ -214,7 +224,7 @@ async function imprimirTicketAutomatico() {
         const ticket = construirTicket(cliente, metodoPago, total);
         const encoder = new TextEncoder();
         const data = encoder.encode(ticket);
-        await bluetoothCharacteristic.writeValue(data);
+        await bluetoothCharacteristicGlobal.writeValue(data);
         mostrarNotificacion('✅ Ticket impreso', 'success');
         return true;
     } catch (error) {
@@ -288,3 +298,4 @@ window.imprimirTicketAutomatico = imprimirTicketAutomatico;
 window.abrirCajaDespuesDeCobro = abrirCajaDespuesDeCobro;
 window.cobrarConTicket = cobrarConTicket;
 window.activarModoSimulacion = activarModoSimulacion;
+window.verificarConexionImpresora = verificarConexionImpresora;

@@ -380,6 +380,7 @@ async function cargarOrdenAlCarrito(orderId) {
                     cantidad: item.cantidad
                 });
             });
+            window.carrito = carrito;
             document.getElementById('cliente').value = order.cliente;
             actualizarCarrito();
             mostrarSeccion('ventas');
@@ -390,7 +391,6 @@ async function cargarOrdenAlCarrito(orderId) {
         console.error('Error:', error);
         mostrarNotificacion('❌ Error al cargar orden', 'danger');
     }
-    window.carrito = carrito;
 }
 
 // ========== PROCESAR PAGO ==========
