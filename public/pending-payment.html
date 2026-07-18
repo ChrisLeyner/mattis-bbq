@@ -52,6 +52,13 @@
         let metodoPago = "Efectivo";
         let totalOrden = 0;
 
+        // Verificar estado de impresora al cargar
+        document.addEventListener('DOMContentLoaded', () => {
+            if (typeof window.verificarConexionImpresora === 'function') {
+                window.verificarConexionImpresora();
+            }
+        });
+
         console.log('🚀 pending-payment inicializado');
 
         // ==================== CARGAR ÓRDENES ====================

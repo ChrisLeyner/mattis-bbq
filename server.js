@@ -416,111 +416,105 @@ app.post('/admin/restore', upload.single('backup'), (req, res) => {
 });
 
 // ==================== CAJA REGISTRADORA ====================
-const { SerialPort } = require('serialport');
-
 let drawerPort = null;
+let drawerConnected = false;
 
-// Configurar caja
-function configurarCaja(portPath) {
+// Intentar conectar a la caja automáticamente al iniciar
+function initDrawer() {
     try {
-        drawerPort = new SerialPort({
-            path: portPath,
-            baudRate: 9600,
-            dataBits: 8,
-            parity: 'none',
-            stopBits: 1,
-            autoOpen: false
-        });
-
-        drawerPort.on('open', () => {
-            console.log('✅ Caja registradora conectada en:', portPath);
-        });
-
-        drawerPort.on('error', (err) => {
-            console.error('❌ Error en caja:', err.message);
-        });
-
-        drawerPort.open((err) => {
-            if (err) {
-                console.log('⚠️ No se pudo conectar a la caja:', err.message);
-                console.log('💡 Asegúrate de que la caja esté conectada en el puerto:', portPath);
-                console.log('💡 En Windows usa COM3, COM4, etc. En Linux usa /dev/ttyUSB0');
+        const { SerialPort } = require('serialport');
+        
+        // Lista de puertos comunes a probar
+        const ports = ['COM1', 'COM2', 'COM3', 'COM4', 'COM5', '/dev/ttyUSB0', '/dev/ttyS0'];
+        
+        // Probar cada puerto
+        for (const portPath of ports) {
+            try {
+                console.log(`🔍 Probando puerto: ${portPath}...`);
+                const testPort = new SerialPort({
+                    path: portPath,
+                    baudRate: 9600,
+                    dataBits: 8,
+                    parity: 'none',
+                    stopBits: 1,
+                    autoOpen: false
+                });
+                
+                testPort.open((err) => {
+                    if (!err) {
+                        console.log(`✅ Caja registradora encontrada en: ${portPath}`);
+                        drawerPort = testPort;
+                        drawerConnected = true;
+                        drawerPort.on('error', (e) => console.log('⚠️ Error en caja:', e.message));
+                    } else {
+                        console.log(`❌ Puerto ${portPath} no disponible:`, err.message);
+                    }
+                });
+                
+                // Si ya encontramos la caja, salimos del bucle
+                if (drawerConnected) break;
+                
+            } catch (e) {
+                console.log(`⚠️ Error probando ${portPath}:`, e.message);
             }
-        });
-        return true;
+        }
+        
+        if (!drawerConnected) {
+            console.log('⚠️ No se encontró caja registradora en ningún puerto.');
+            console.log('💡 En Windows usa COM3 o COM4 (verifica en Administrador de dispositivos)');
+            console.log('💡 En Linux usa /dev/ttyUSB0');
+        }
+        
     } catch (error) {
-        console.log('⚠️ Error configurando caja:', error.message);
-        return false;
+        console.log('⚠️ No se pudo cargar serialport:', error.message);
+        console.log('💡 Ejecuta: npm install serialport');
     }
 }
 
-// Abrir caja
-function abrirCajaRegistradora() {
-    // Intentar diferentes puertos comunes si no está configurado
-    const puertos = process.env.CAJA_PORT ? [process.env.CAJA_PORT] : ['COM3', 'COM4', 'COM5', '/dev/ttyUSB0', '/dev/ttyS0'];
-    
-    for (const port of puertos) {
-        if (!drawerPort || !drawerPort.isOpen) {
-            configurarCaja(port);
-        }
-        if (drawerPort && drawerPort.isOpen) {
-            break;
-        }
-    }
-    
-    if (!drawerPort || !drawerPort.isOpen) {
-        console.log('⚠️ No se pudo conectar a la caja en ningún puerto');
-        return false;
-    }
+// Inicializar al iniciar
+initDrawer();
 
+// Abrir caja registradora
+function abrirCajaRegistradora() {
+    if (!drawerConnected || !drawerPort) {
+        console.log('⚠️ Caja no conectada. Intentando reconectar...');
+        initDrawer();
+        if (!drawerConnected) {
+            console.log('❌ No se pudo conectar a la caja');
+            return false;
+        }
+    }
+    
     try {
-        // Comando ESC/POS para abrir cajón (estándar para muchas impresoras)
+        // Comando estándar ESC/POS para abrir cajón
+        // ESC p 0 25 250
         const comando = Buffer.from([0x1B, 0x70, 0x00, 0x19, 0xFA]);
         drawerPort.write(comando);
         console.log('💰 Caja registradora abierta');
         return true;
     } catch (error) {
         console.error('❌ Error abriendo caja:', error.message);
+        drawerConnected = false;
+        drawerPort = null;
         return false;
     }
 }
 
-// Endpoint para abrir caja (con más información)
+// Endpoint para abrir caja
 app.post('/api/cash/drawer/open', (req, res) => {
-    console.log('📨 Solicitud de apertura de caja recibida');
+    console.log('📨 Solicitud de apertura de caja');
     const success = abrirCajaRegistradora();
     res.json({ 
         success: success, 
         message: success ? 'Caja abierta' : 'No se pudo abrir la caja',
-        port: process.env.CAJA_PORT || 'auto-detect'
+        connected: drawerConnected
     });
 });
 
-// Endpoint para probar la caja
-app.get('/api/cash/drawer/test', (req, res) => {
-    const puertos = ['COM3', 'COM4', 'COM5', '/dev/ttyUSB0', '/dev/ttyS0'];
-    const resultados = [];
-    
-    for (const port of puertos) {
-        try {
-            const testPort = new SerialPort({ path: port, baudRate: 9600, autoOpen: false });
-            testPort.open((err) => {
-                if (err) {
-                    resultados.push({ port, disponible: false, error: err.message });
-                } else {
-                    testPort.close();
-                    resultados.push({ port, disponible: true });
-                }
-            });
-        } catch (e) {
-            resultados.push({ port, disponible: false, error: e.message });
-        }
-    }
-    
-    setTimeout(() => {
-        res.json({ 
-            puertos_detectados: resultados,
-            puerto_configurado: process.env.CAJA_PORT || 'no configurado'
-        });
-    }, 1000);
+// Endpoint para ver estado de la caja
+app.get('/api/cash/drawer/status', (req, res) => {
+    res.json({ 
+        connected: drawerConnected,
+        port: drawerPort ? drawerPort.path : 'no conectado'
+    });
 });

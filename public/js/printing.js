@@ -246,20 +246,26 @@ async function imprimirTicketAutomatico() {
 
 // ==================== ABRIR CAJA ====================
 async function abrirCajaDespuesDeCobro() {
+    console.log('🔓 Intentando abrir caja registradora...');
     try {
         const response = await fetch('/api/cash/drawer/open', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });
         const result = await response.json();
+        console.log('📨 Respuesta de caja:', result);
         if (result.success) {
-            console.log('💰 Caja abierta');
+            console.log('💰 Caja abierta exitosamente');
+            mostrarNotificacion('💰 Caja registradora abierta', 'success');
+            return true;
         } else {
-            console.log('⚠️ No se pudo abrir caja:', result.error);
+            console.log('⚠️ No se pudo abrir caja:', result.message);
+            mostrarNotificacion('⚠️ No se pudo abrir caja: ' + (result.message || 'verificar conexión'), 'warning');
+            return false;
         }
-        return result.success;
     } catch (error) {
-        console.error('Error abriendo caja:', error);
+        console.error('❌ Error abriendo caja:', error);
+        mostrarNotificacion('❌ Error al abrir caja: ' + error.message, 'danger');
         return false;
     }
 }
