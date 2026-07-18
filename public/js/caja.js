@@ -393,7 +393,7 @@ async function cargarOrdenAlCarrito(orderId) {
     }
 }
 
-// ========== PROCESAR PAGO ==========
+// ========== PROCESAR PAGO (MODIFICADO - SIN limpiarCarrito) ==========
 async function procesarPago() {
     console.log('procesarPago iniciado');
     if (!turnoAbierto) {
@@ -446,7 +446,7 @@ async function procesarPago() {
             const data = await response.json();
             if (response.ok && data.success) {
                 mostrarNotificacion(`✅ Orden ${ordenSeleccionada} pagada con ${metodoPago}`, 'success');
-                limpiarCarrito();
+                // ⚠️ NO LIMPIAMOS EL CARRITO AQUÍ - lo hará cobrarConTicket()
                 cargarOrdenesPendientesCobro();
                 ordenSeleccionada = null;
                 cargarProductos();
@@ -481,11 +481,9 @@ async function procesarPago() {
             const result = await response.json();
             if (result.success) {
                 mostrarNotificacion(`✅ Venta para llevar cobrada: ${result.order.order_number}`, 'success');
-                limpiarCarrito();
+                // ⚠️ NO LIMPIAMOS EL CARRITO AQUÍ - lo hará cobrarConTicket()
+                // limpiarCarrito();  ← ELIMINADO
                 cargarProductos();
-                if (result.success) {
-                    // Ya se imprime desde cobrarConTicket()
-                }
             } else {
                 mostrarNotificacion('❌ Error al crear venta', 'danger');
             }

@@ -191,13 +191,23 @@ function construirTicket(cliente, metodoPago, total) {
 async function imprimirTicketAutomatico() {
     // Verificar que hay productos en el carrito
     if (!window.carrito || window.carrito.length === 0) {
-        console.log('⚠️ No hay productos para imprimir');
-        return false;
+        // Intentar recuperar de localStorage
+        const savedTicket = JSON.parse(localStorage.getItem('ticketData') || 'null');
+        if (savedTicket && savedTicket.carrito && savedTicket.carrito.length > 0) {
+            console.log('🔄 Recuperando carrito guardado para imprimir...');
+            window.carrito = savedTicket.carrito;
+        } else {
+            console.log('⚠️ No hay productos para imprimir');
+            return false;
+        }
     }
     
     const cliente = document.getElementById('cliente')?.value || 'Cliente';
     const metodoPago = document.getElementById('metodoPago')?.value || 'Efectivo';
     const total = window.carrito.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
+    
+    console.log(`📄 Imprimiendo ticket para: ${cliente}, Total: $${total.toFixed(2)}`);
+    console.log('Items:', window.carrito);
     
     // Si estamos en modo simulación
     if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
@@ -258,7 +268,18 @@ async function abrirCajaDespuesDeCobro() {
 async function cobrarConTicket() {
     console.log('🔄 Procesando cobro con ticket...');
     
-    // Ejecutar el cobro (llama a procesarPago que está en caja.js)
+    // GUARDAR UNA COPIA DEL CARRITO ANTES DE COBRAR
+    const ticketData = {
+        carrito: window.carrito ? [...window.carrito] : [],
+        cliente: document.getElementById('cliente')?.value || 'Cliente',
+        metodoPago: document.getElementById('metodoPago')?.value || 'Efectivo',
+        total: window.carrito ? window.carrito.reduce((sum, item) => sum + (item.precio * item.cantidad), 0) : 0
+    };
+    
+    // Guardar en localStorage para recuperar después
+    localStorage.setItem('ticketData', JSON.stringify(ticketData));
+    
+    // Ejecutar el cobro
     if (typeof window.procesarPago === 'function') {
         await window.procesarPago();
     } else {
@@ -270,8 +291,22 @@ async function cobrarConTicket() {
     // Esperar a que se complete el cobro
     await new Promise(resolve => setTimeout(resolve, 800));
     
+    // Recuperar los datos del ticket guardados
+    const savedTicket = JSON.parse(localStorage.getItem('ticketData') || 'null');
+    if (savedTicket) {
+        // Restaurar carrito temporalmente para imprimir
+        window.carrito = savedTicket.carrito;
+        document.getElementById('cliente').value = savedTicket.cliente;
+        // Forzar el método de pago
+        const metodoSelect = document.getElementById('metodoPago');
+        if (metodoSelect) metodoSelect.value = savedTicket.metodoPago;
+    }
+    
     // Imprimir ticket
     const impreso = await imprimirTicketAutomatico();
+    
+    // Limpiar los datos guardados
+    localStorage.removeItem('ticketData');
     
     // Abrir caja si se imprimió correctamente
     if (impreso) {
