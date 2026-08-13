@@ -95,32 +95,51 @@ async function cerrarTurno() {
     try {
         mostrarNotificacion('⏳ Cerrando turno...', 'info');
         const response = await fetch('/api/cash/close', { method: 'POST' });
-        
-        if (response.ok) {
-            const blob = await response.blob();
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            // --- 1. Mostrar PDF ---
+            const pdfBase64 = data.pdf;
+            const blob = base64ToBlob(pdfBase64, 'application/pdf');
             const url = URL.createObjectURL(blob);
-            
-            // Descargar el PDF (sin abrir ventana emergente)
             const a = document.createElement('a');
             a.href = url;
             a.download = `cierre_${Date.now()}.pdf`;
             a.click();
+
+            // --- 2. Imprimir ticket de cierre ---
+            const cierre = data.cierre;
+            await imprimirTicketCierre(cierre);
+
+            mostrarNotificacion('✅ Turno cerrado. PDF y ticket de cierre generados.', 'success');
             
-            mostrarNotificacion('✅ Turno cerrado. El PDF se descargó. Recargando página...', 'success');
-            
-            // Recargar la página después de 1 segundo
             setTimeout(() => {
                 URL.revokeObjectURL(url);
                 window.location.reload(true);
-            }, 1500);
+            }, 2000);
         } else {
-            const error = await response.json();
-            mostrarNotificacion('❌ Error: ' + (error.error || 'desconocido'), 'danger');
+            mostrarNotificacion('❌ Error: ' + (data.error || 'desconocido'), 'danger');
         }
     } catch (error) {
         console.error(error);
         mostrarNotificacion('❌ Error de conexión', 'danger');
     }
+}
+
+// Convertir base64 a Blob
+function base64ToBlob(base64, mimeType) {
+    const byteCharacters = atob(base64);
+    const byteArrays = [];
+    for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+        const slice = byteCharacters.slice(offset, offset + 512);
+        const byteNumbers = new Array(slice.length);
+        for (let i = 0; i < slice.length; i++) {
+            byteNumbers[i] = slice.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        byteArrays.push(byteArray);
+    }
+    return new Blob(byteArrays, { type: mimeType });
 }
 
 // ========== PRODUCTOS ==========

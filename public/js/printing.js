@@ -333,6 +333,84 @@ function mostrarNotificacion(mensaje, tipo) {
     setTimeout(() => div.remove(), 4000);
 }
 
+// ==================== IMPRIMIR TICKET DE CIERRE ====================
+async function imprimirTicketCierre(cierre) {
+    console.log('🔄 Imprimiendo ticket de cierre...');
+    
+    const fecha = new Date().toLocaleString();
+    let ticket = '';
+    
+    const LINE_FEED = '\x0A';
+    const SEPARATOR = '='.repeat(32) + LINE_FEED;
+    const DOUBLE_SEPARATOR = '='.repeat(32) + LINE_FEED;
+    
+    // Encabezado (tamaño grande para resaltar)
+    ticket += '    MATTI\'S B-B-Q' + LINE_FEED;
+    ticket += '  CIERRE DE TURNO' + LINE_FEED;
+    ticket += SEPARATOR;
+    ticket += `Fecha: ${fecha}` + LINE_FEED;
+    ticket += `Apertura: ${new Date(cierre.fechaApertura).toLocaleString()}` + LINE_FEED;
+    ticket += SEPARATOR + LINE_FEED;
+    
+    // Resumen de ventas
+    ticket += 'RESUMEN DE VENTAS' + LINE_FEED;
+    ticket += SEPARATOR;
+    ticket += `Fondo inicial: $${cierre.fondoInicial.toFixed(2)} MXN` + LINE_FEED;
+    ticket += `Efectivo: $${cierre.ventasEfectivo.toFixed(2)} MXN` + LINE_FEED;
+    ticket += `Tarjeta: $${cierre.ventasTarjeta.toFixed(2)} MXN` + LINE_FEED;
+    ticket += `Transferencia: $${cierre.ventasTransferencia.toFixed(2)} MXN` + LINE_FEED;
+    ticket += `Dólares: $${cierre.ventasDolaresUSD.toFixed(2)} USD` + LINE_FEED;
+    ticket += ` (equiv. $${cierre.ventasDolaresMXN.toFixed(2)} MXN)` + LINE_FEED;
+    ticket += SEPARATOR + LINE_FEED;
+    
+    // Totales
+    ticket += `TOTAL VENDIDO: $${cierre.totalVendidoMXN.toFixed(2)} MXN` + LINE_FEED;
+    ticket += DOUBLE_SEPARATOR;
+    ticket += `EFECTIVO EN CAJA:` + LINE_FEED;
+    ticket += ` MXN: $${cierre.efectivoEnCajaMXN.toFixed(2)}` + LINE_FEED;
+    ticket += ` USD: $${cierre.ventasDolaresUSD.toFixed(2)}` + LINE_FEED;
+    ticket += DOUBLE_SEPARATOR + LINE_FEED;
+    
+    ticket += '¡Gracias por su visita!' + LINE_FEED;
+    ticket += '¡Vuelva pronto!' + LINE_FEED + LINE_FEED;
+    
+    // Cortar papel
+    ticket += '\x1D\x56\x00';
+    
+    // --- Imprimir el ticket ---
+    // Si estamos en modo simulación
+    if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
+        console.log('📄 TICKET DE CIERRE (SIMULACIÓN)');
+        console.log('='.repeat(40));
+        console.log(ticket);
+        console.log('='.repeat(40));
+        mostrarNotificacion('🖨️ [SIMULACIÓN] Ticket de cierre mostrado en consola', 'info');
+        return true;
+    }
+    
+    // Verificar conexión real
+    if (!impresoraConectadaGlobal || !bluetoothCharacteristicGlobal) {
+        const conectado = await conectarImpresora();
+        if (!conectado) {
+            mostrarNotificacion('⚠️ Conecta la impresora para imprimir el cierre', 'warning');
+            return false;
+        }
+    }
+    
+    try {
+        mostrarNotificacion('🖨️ Imprimiendo ticket de cierre...', 'info');
+        const encoder = new TextEncoder();
+        const data = encoder.encode(ticket);
+        await bluetoothCharacteristicGlobal.writeValue(data);
+        mostrarNotificacion('✅ Ticket de cierre impreso', 'success');
+        return true;
+    } catch (error) {
+        console.error('Error imprimiendo cierre:', error);
+        mostrarNotificacion('❌ Error al imprimir cierre: ' + error.message, 'danger');
+        return false;
+    }
+}
+
 // Exponer funciones globales
 window.conectarImpresora = conectarImpresora;
 window.imprimirTicketAutomatico = imprimirTicketAutomatico;
@@ -340,3 +418,4 @@ window.abrirCajaDespuesDeCobro = abrirCajaDespuesDeCobro;
 window.cobrarConTicket = cobrarConTicket;
 window.activarModoSimulacion = activarModoSimulacion;
 window.verificarConexionImpresora = verificarConexionImpresora;
+window.imprimirTicketCierre = imprimirTicketCierre;

@@ -280,18 +280,37 @@ app.post('/api/cash/close', (req, res) => {
       const totalVendidoMXN = ventasEfectivo + ventasTarjeta + ventasTransferencia + ventasDolaresMXN;
       const efectivoEnCajaMXN = turno.fondo_inicial + ventasEfectivo;
 
+      // =============================================
+      // DATOS DEL CIERRE PARA EL TICKET
+      // =============================================
+      const datosCierre = {
+        fondoInicial: turno.fondo_inicial,
+        ventasEfectivo: ventasEfectivo,
+        ventasTarjeta: ventasTarjeta,
+        ventasTransferencia: ventasTransferencia,
+        ventasDolaresUSD: ventasDolaresUSD,
+        ventasDolaresMXN: ventasDolaresMXN,
+        totalVendidoMXN: totalVendidoMXN,
+        efectivoEnCajaMXN: efectivoEnCajaMXN,
+        fechaApertura: turno.fecha_apertura,
+        fechaCierre: new Date().toISOString()
+      };
+
       // Generar PDF
       const doc = new PDFDocument({ margin: 50 });
       const buffers = [];
       doc.on('data', buffers.push.bind(buffers));
       doc.on('end', () => {
         const pdfData = Buffer.concat(buffers);
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename=cierre_${Date.now()}.pdf`);
-        res.send(pdfData);
+        // Enviar PDF y datos del cierre juntos
+        res.json({
+          success: true,
+          pdf: pdfData.toString('base64'), // Enviamos como base64
+          cierre: datosCierre
+        });
       });
 
-      // Estilo y contenido
+      // ... (el resto del contenido del PDF)
       doc.fontSize(20).text('MATTI\'S B-B-Q', { align: 'center' });
       doc.moveDown();
       doc.fontSize(16).text('REPORTE DE CIERRE DE CAJA', { align: 'center' });
