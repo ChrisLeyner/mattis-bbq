@@ -20,9 +20,7 @@
         <div class="container-fluid">
             <a class="navbar-brand" href="/">💰 COBROS PENDIENTES - MATTI'S BBQ</a>
             <div>
-                <button id="btnConectarImpresora" onclick="window.conectarImpresora()" class="btn btn-secondary btn-sm me-1">
-                    <i class="fas fa-bluetooth"></i> IMPRESORA
-                </button>
+                <!-- Botón de impresora eliminado - solo se conecta desde caja -->
                 <button class="btn btn-outline-light btn-sm" onclick="location.href='/'">⬅ Volver</button>
             </div>
         </div>
@@ -44,297 +42,303 @@
     <audio id="notificacion" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
     
     <script src="/socket.io/socket.io.js"></script>
-<script src="/js/printing.js"></script>
-<script>
-    let socket = io();
-    let tipoCambioUSD = localStorage.getItem('tipoCambioUSD') ? parseFloat(localStorage.getItem('tipoCambioUSD')) : 17.00;
-    let ordenSeleccionada = null;
-    let metodoPago = "Efectivo";
-    let totalOrden = 0;
-
-    console.log('🚀 pending-payment inicializado');
-
-    // ==================== CARGAR ÓRDENES ====================
-    async function cargarPendientes() {
-        console.log('🔄 Cargando órdenes pendientes...');
-        try {
-            const res = await fetch('/api/orders/pending-payment');
-            const orders = await res.json();
-            renderizar(orders);
-        } catch (error) {
-            console.error('❌ Error cargando órdenes:', error);
-            document.getElementById('ordersList').innerHTML = `
-                <div class="col-12 text-center text-danger p-5">
-                    ❌ Error al cargar órdenes<br>
-                    <button class="btn btn-primary mt-2" onclick="cargarPendientes()">Reintentar</button>
-                </div>
-            `;
-        }
-    }
-
-    // ==================== RENDERIZAR ====================
-    function renderizar(orders) {
-        const container = document.getElementById('ordersList');
-        if (!orders || orders.length === 0) {
-            container.innerHTML = '<div class="col-12 text-center p-5 text-muted">No hay órdenes pendientes de cobro</div>';
-            return;
-        }
-        
-        container.innerHTML = orders.map(order => {
-            let items = [];
-            try { items = JSON.parse(order.items || '[]'); } catch(e) {}
-            items.forEach(item => {
-                item.precio_unitario = item.precio_unitario || (item.subtotal / item.cantidad) || 0;
-            });
-            const total = order.total || 0;
-            const selectedClass = (ordenSeleccionada === order.id) ? 'selected' : '';
-            return `
-                <div class="col-md-6 col-lg-4">
-                    <div class="order-card ${selectedClass}" onclick="seleccionarOrden(${order.id})">
-                        <div class="d-flex justify-content-between">
-                            <h5>${escapeHtml(order.cliente)}</h5>
-                            <span class="badge bg-warning">${order.estado}</span>
-                        </div>
-                        <small>Orden: ${order.order_number}</small>
-                        <hr>
-                        ${items.map(item => `<div>${item.cantidad}x ${escapeHtml(item.nombre)} - $${(item.precio_unitario * item.cantidad).toFixed(2)}</div>`).join('')}
-                        <hr>
-                        <div class="fw-bold">Total: $${total.toFixed(2)} MXN</div>
-                        <div class="mt-2">
-                            <button class="btn btn-success btn-sm w-100" onclick="event.stopPropagation(); iniciarCobro(${order.id}, ${total})">💵 COBRAR</button>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }).join('');
-    }
-
-    function seleccionarOrden(id) {
-        ordenSeleccionada = id;
-        cargarPendientes();
-    }
-
-    // ==================== MODAL DE COBRO ====================
-    function iniciarCobro(orderId, total) {
-        ordenSeleccionada = orderId;
-        totalOrden = total;
-        mostrarPanelCobro();
-    }
-
-    function mostrarPanelCobro() {
-        const modal = document.getElementById('modalCobro');
-        const content = document.getElementById('modalContent');
-        const totalMXN = totalOrden;
-        const usdEquivalente = totalMXN / tipoCambioUSD;
-        
-        modal.style.display = 'flex';
-        content.innerHTML = `
-            <h5 class="text-center mb-3">Cobrar orden</h5>
-            <p><strong>Total a pagar:</strong> $${totalMXN.toFixed(2)} MXN (≈ $${usdEquivalente.toFixed(2)} USD)</p>
-            <div class="d-flex gap-2 mb-3">
-                <div class="flex-grow-1 payment-option ${metodoPago === 'Efectivo' ? 'payment-active' : ''}" onclick="setMetodo('Efectivo', this)">💵 Efectivo</div>
-                <div class="flex-grow-1 payment-option ${metodoPago === 'USD' ? 'payment-active' : ''}" onclick="setMetodo('USD', this)">🇺🇸 Dólares</div>
-                <div class="flex-grow-1 payment-option ${metodoPago === 'Tarjeta' ? 'payment-active' : ''}" onclick="setMetodo('Tarjeta', this)">💳 Tarjeta</div>
-                <div class="flex-grow-1 payment-option ${metodoPago === 'Transferencia' ? 'payment-active' : ''}" onclick="setMetodo('Transferencia', this)">📱 Transf.</div>
-            </div>
-            <div id="panelCambioCobro" class="panel-cambio"></div>
-            <div class="d-grid gap-2 mt-3">
-                <button onclick="confirmarCobro()" class="btn btn-danger">COBRAR</button>
-                <button onclick="cerrarModalCobro()" class="btn btn-secondary">Cancelar</button>
-            </div>
-        `;
-        actualizarPanelCambio();
-    }
-
-    function setMetodo(metodo, elemento) {
-        metodoPago = metodo;
-        document.querySelectorAll('#modalContent .payment-option').forEach(opt => opt.classList.remove('payment-active'));
-        elemento.classList.add('payment-active');
-        actualizarPanelCambio();
-    }
-
-    function actualizarPanelCambio() {
-        const container = document.getElementById('panelCambioCobro');
-        if (!container) return;
-        const totalMXN = totalOrden;
-        if (metodoPago === 'Efectivo') {
-            container.innerHTML = `
-                <label>💰 Recibido (MXN):</label>
-                <input type="number" id="recibido-mxn" class="form-control" oninput="calcularCambio()">
-                <div class="mt-2">💵 Cambio: <span id="cambio-mxn" class="fw-bold text-success">$0.00</span></div>
-            `;
-        } else if (metodoPago === 'USD') {
-            container.innerHTML = `
-                <label>💵 Recibido (USD):</label>
-                <input type="number" id="recibido-usd" class="form-control" oninput="calcularCambio()">
-                <div class="mt-2">💱 Cambio en pesos: <span id="cambio-mxn" class="fw-bold text-success">$0.00 MXN</span></div>
-                <small class="text-muted">Tipo de cambio: 1 USD = $${tipoCambioUSD.toFixed(2)} MXN</small>
-            `;
-        } else {
-            container.innerHTML = `<p class="text-muted">Pago con ${metodoPago}. No requiere campo de cambio.</p>`;
-        }
-    }
-
-    function calcularCambio() {
-        const totalMXN = totalOrden;
-        let cambio = 0;
-        if (metodoPago === 'Efectivo') {
-            const recibido = parseFloat(document.getElementById('recibido-mxn')?.value) || 0;
-            cambio = recibido - totalMXN;
-            const span = document.getElementById('cambio-mxn');
-            if (span) span.innerText = cambio >= 0 ? `$${cambio.toFixed(2)}` : `$${Math.abs(cambio).toFixed(2)} faltante`;
-        } else if (metodoPago === 'USD') {
-            const usdRecibido = parseFloat(document.getElementById('recibido-usd')?.value) || 0;
-            const recibidoMXN = usdRecibido * tipoCambioUSD;
-            cambio = recibidoMXN - totalMXN;
-            const span = document.getElementById('cambio-mxn');
-            if (span) span.innerText = cambio >= 0 ? `$${cambio.toFixed(2)} MXN` : `$${Math.abs(cambio).toFixed(2)} MXN faltante`;
-        }
-    }
-
-    // ==================== CONFIRMAR COBRO (CON IMPRESIÓN) ====================
-    async function confirmarCobro() {
-        const totalMXN = totalOrden;
-        
-        // Validar monto según método
-        if (metodoPago === 'Efectivo') {
-            const recibido = parseFloat(document.getElementById('recibido-mxn')?.value) || 0;
-            if (recibido < totalMXN) {
-                alert(`Monto insuficiente. Total: $${totalMXN.toFixed(2)} MXN`);
-                return;
-            }
-        } else if (metodoPago === 'USD') {
-            const usdRecibido = parseFloat(document.getElementById('recibido-usd')?.value) || 0;
-            if (usdRecibido * tipoCambioUSD < totalMXN) {
-                alert(`Monto insuficiente. Total en MXN: $${totalMXN.toFixed(2)}`);
-                return;
-            }
-        }
-
-        let metodoReal = metodoPago;
-        let total_usd = 0;
-        if (metodoReal === 'USD') {
-            total_usd = parseFloat(document.getElementById('recibido-usd')?.value) || 0;
-            metodoReal = 'Dólares';
-        }
-
-        try {
-            // 1. Marcar como pagado
-            const response = await fetch(`/api/orders/${ordenSeleccionada}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    estado: 'pagado',
-                    metodo_pago: metodoReal,
-                    total_usd: total_usd
-                })
-            });
-            const data = await response.json();
+    <script src="/js/printing.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('🚀 pending-payment inicializado');
             
-            if (response.ok && data.success) {
-                mostrarNotificacion('✅ Cobro exitoso', 'success');
-                cerrarModalCobro();
-                
-                // 2. Recargar lista de pendientes
-                cargarPendientes();
-                
-                // 3. Obtener la orden y preparar para imprimir
+            let socket = io();
+            let tipoCambioUSD = localStorage.getItem('tipoCambioUSD') ? parseFloat(localStorage.getItem('tipoCambioUSD')) : 17.00;
+            let ordenSeleccionada = null;
+            let metodoPago = "Efectivo";
+            let totalOrden = 0;
+
+            // ==================== CARGAR ÓRDENES ====================
+            async function cargarPendientes() {
+                console.log('🔄 Cargando órdenes pendientes...');
                 try {
-                    const orderResponse = await fetch(`/api/orders/${ordenSeleccionada}`);
-                    const order = await orderResponse.json();
-                    
-                    if (order) {
-                        // Crear carrito temporal
-                        window.carrito = [];
-                        let items = [];
-                        try { items = JSON.parse(order.items || '[]'); } catch(e) {}
-                        items.forEach(item => {
-                            window.carrito.push({
-                                id: item.product_id || Date.now(),
-                                nombre: item.nombre,
-                                precio: item.precio_unitario || item.precio || 0,
-                                cantidad: item.cantidad
-                            });
-                        });
-                        
-                        // Guardar cliente
-                        if (order.cliente) {
-                            const clienteInput = document.getElementById('cliente');
-                            if (clienteInput) clienteInput.value = order.cliente;
-                        }
+                    const res = await fetch('/api/orders/pending-payment');
+                    const orders = await res.json();
+                    renderizar(orders);
+                } catch (error) {
+                    console.error('❌ Error cargando órdenes:', error);
+                    const container = document.getElementById('ordersList');
+                    if (container) {
+                        container.innerHTML = `
+                            <div class="col-12 text-center text-danger p-5">
+                                ❌ Error al cargar órdenes<br>
+                                <button class="btn btn-primary mt-2" onclick="cargarPendientes()">Reintentar</button>
+                            </div>
+                        `;
                     }
-                } catch (e) {
-                    console.warn('⚠️ Error cargando orden para imprimir:', e);
                 }
-                
-                // 4. Imprimir ticket
-                try {
-                    if (typeof window.imprimirTicketAutomatico === 'function') {
-                        const impreso = await window.imprimirTicketAutomatico();
-                        if (impreso) {
-                            await window.abrirCajaDespuesDeCobro();
-                        }
-                    } else {
-                        console.warn('⚠️ función imprimirTicketAutomatico no disponible');
-                    }
-                } catch (e) {
-                    console.warn('⚠️ Error imprimiendo ticket:', e);
-                }
-                
-                // 5. Limpiar carrito temporal
-                window.carrito = [];
-                
-                // 6. Notificar
-                socket.emit('estado-actualizado', { orderId: ordenSeleccionada, estado: 'pagado' });
-                
-            } else {
-                alert('❌ Error: ' + (data.error || 'desconocido'));
             }
-        } catch (error) {
-            console.error('Error en cobro:', error);
-            alert('❌ Error de conexión');
-        }
-    }
 
-    // ==================== UTILIDADES ====================
-    function cerrarModalCobro() {
-        const modal = document.getElementById('modalCobro');
-        if (modal) modal.style.display = 'none';
-        ordenSeleccionada = null;
-        metodoPago = 'Efectivo';
-    }
+            // ==================== RENDERIZAR ====================
+            function renderizar(orders) {
+                const container = document.getElementById('ordersList');
+                if (!container) {
+                    console.error('❌ Elemento ordersList no encontrado');
+                    return;
+                }
+                
+                if (!orders || orders.length === 0) {
+                    container.innerHTML = '<div class="col-12 text-center p-5 text-muted">No hay órdenes pendientes de cobro</div>';
+                    return;
+                }
+                
+                container.innerHTML = orders.map(order => {
+                    let items = [];
+                    try { items = JSON.parse(order.items || '[]'); } catch(e) {}
+                    items.forEach(item => {
+                        item.precio_unitario = item.precio_unitario || (item.subtotal / item.cantidad) || 0;
+                    });
+                    const total = order.total || 0;
+                    const selectedClass = (ordenSeleccionada === order.id) ? 'selected' : '';
+                    return `
+                        <div class="col-md-6 col-lg-4">
+                            <div class="order-card ${selectedClass}" onclick="seleccionarOrden(${order.id})">
+                                <div class="d-flex justify-content-between">
+                                    <h5>${escapeHtml(order.cliente)}</h5>
+                                    <span class="badge bg-warning">${order.estado}</span>
+                                </div>
+                                <small>Orden: ${order.order_number}</small>
+                                <hr>
+                                ${items.map(item => `<div>${item.cantidad}x ${escapeHtml(item.nombre)} - $${(item.precio_unitario * item.cantidad).toFixed(2)}</div>`).join('')}
+                                <hr>
+                                <div class="fw-bold">Total: $${total.toFixed(2)} MXN</div>
+                                <div class="mt-2">
+                                    <button class="btn btn-success btn-sm w-100" onclick="event.stopPropagation(); iniciarCobro(${order.id}, ${total})">💵 COBRAR</button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
 
-    function escapeHtml(str) {
-        if (!str) return '';
-        return str.replace(/[&<>]/g, function(m) {
-            if (m === '&') return '&amp;';
-            if (m === '<') return '&lt;';
-            if (m === '>') return '&gt;';
-            return m;
+            function seleccionarOrden(id) {
+                ordenSeleccionada = id;
+                cargarPendientes();
+            }
+
+            // ==================== MODAL DE COBRO ====================
+            function iniciarCobro(orderId, total) {
+                ordenSeleccionada = orderId;
+                totalOrden = total;
+                mostrarPanelCobro();
+            }
+
+            function mostrarPanelCobro() {
+                const modal = document.getElementById('modalCobro');
+                const content = document.getElementById('modalContent');
+                const totalMXN = totalOrden;
+                const usdEquivalente = totalMXN / tipoCambioUSD;
+                
+                modal.style.display = 'flex';
+                content.innerHTML = `
+                    <h5 class="text-center mb-3">Cobrar orden</h5>
+                    <p><strong>Total a pagar:</strong> $${totalMXN.toFixed(2)} MXN (≈ $${usdEquivalente.toFixed(2)} USD)</p>
+                    <div class="d-flex gap-2 mb-3">
+                        <div class="flex-grow-1 payment-option ${metodoPago === 'Efectivo' ? 'payment-active' : ''}" onclick="setMetodo('Efectivo', this)">💵 Efectivo</div>
+                        <div class="flex-grow-1 payment-option ${metodoPago === 'USD' ? 'payment-active' : ''}" onclick="setMetodo('USD', this)">🇺🇸 Dólares</div>
+                        <div class="flex-grow-1 payment-option ${metodoPago === 'Tarjeta' ? 'payment-active' : ''}" onclick="setMetodo('Tarjeta', this)">💳 Tarjeta</div>
+                        <div class="flex-grow-1 payment-option ${metodoPago === 'Transferencia' ? 'payment-active' : ''}" onclick="setMetodo('Transferencia', this)">📱 Transf.</div>
+                    </div>
+                    <div id="panelCambioCobro" class="panel-cambio"></div>
+                    <div class="d-grid gap-2 mt-3">
+                        <button onclick="confirmarCobro()" class="btn btn-danger">COBRAR</button>
+                        <button onclick="cerrarModalCobro()" class="btn btn-secondary">Cancelar</button>
+                    </div>
+                `;
+                actualizarPanelCambio();
+            }
+
+            function setMetodo(metodo, elemento) {
+                metodoPago = metodo;
+                document.querySelectorAll('#modalContent .payment-option').forEach(opt => opt.classList.remove('payment-active'));
+                elemento.classList.add('payment-active');
+                actualizarPanelCambio();
+            }
+
+            function actualizarPanelCambio() {
+                const container = document.getElementById('panelCambioCobro');
+                if (!container) return;
+                const totalMXN = totalOrden;
+                if (metodoPago === 'Efectivo') {
+                    container.innerHTML = `
+                        <label>💰 Recibido (MXN):</label>
+                        <input type="number" id="recibido-mxn" class="form-control" oninput="calcularCambio()">
+                        <div class="mt-2">💵 Cambio: <span id="cambio-mxn" class="fw-bold text-success">$0.00</span></div>
+                    `;
+                } else if (metodoPago === 'USD') {
+                    container.innerHTML = `
+                        <label>💵 Recibido (USD):</label>
+                        <input type="number" id="recibido-usd" class="form-control" oninput="calcularCambio()">
+                        <div class="mt-2">💱 Cambio en pesos: <span id="cambio-mxn" class="fw-bold text-success">$0.00 MXN</span></div>
+                        <small class="text-muted">Tipo de cambio: 1 USD = $${tipoCambioUSD.toFixed(2)} MXN</small>
+                    `;
+                } else {
+                    container.innerHTML = `<p class="text-muted">Pago con ${metodoPago}. No requiere campo de cambio.</p>`;
+                }
+            }
+
+            function calcularCambio() {
+                const totalMXN = totalOrden;
+                let cambio = 0;
+                if (metodoPago === 'Efectivo') {
+                    const recibido = parseFloat(document.getElementById('recibido-mxn')?.value) || 0;
+                    cambio = recibido - totalMXN;
+                    const span = document.getElementById('cambio-mxn');
+                    if (span) span.innerText = cambio >= 0 ? `$${cambio.toFixed(2)}` : `$${Math.abs(cambio).toFixed(2)} faltante`;
+                } else if (metodoPago === 'USD') {
+                    const usdRecibido = parseFloat(document.getElementById('recibido-usd')?.value) || 0;
+                    const recibidoMXN = usdRecibido * tipoCambioUSD;
+                    cambio = recibidoMXN - totalMXN;
+                    const span = document.getElementById('cambio-mxn');
+                    if (span) span.innerText = cambio >= 0 ? `$${cambio.toFixed(2)} MXN` : `$${Math.abs(cambio).toFixed(2)} MXN faltante`;
+                }
+            }
+
+            // ==================== CONFIRMAR COBRO ====================
+            async function confirmarCobro() {
+                const totalMXN = totalOrden;
+                
+                if (metodoPago === 'Efectivo') {
+                    const recibido = parseFloat(document.getElementById('recibido-mxn')?.value) || 0;
+                    if (recibido < totalMXN) {
+                        alert(`Monto insuficiente. Total: $${totalMXN.toFixed(2)} MXN`);
+                        return;
+                    }
+                } else if (metodoPago === 'USD') {
+                    const usdRecibido = parseFloat(document.getElementById('recibido-usd')?.value) || 0;
+                    if (usdRecibido * tipoCambioUSD < totalMXN) {
+                        alert(`Monto insuficiente. Total en MXN: $${totalMXN.toFixed(2)}`);
+                        return;
+                    }
+                }
+
+                let metodoReal = metodoPago;
+                let total_usd = 0;
+                if (metodoReal === 'USD') {
+                    total_usd = parseFloat(document.getElementById('recibido-usd')?.value) || 0;
+                    metodoReal = 'Dólares';
+                }
+
+                try {
+                    const response = await fetch(`/api/orders/${ordenSeleccionada}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            estado: 'pagado',
+                            metodo_pago: metodoReal,
+                            total_usd: total_usd
+                        })
+                    });
+                    const data = await response.json();
+                    
+                    if (response.ok && data.success) {
+                        mostrarNotificacion('✅ Cobro exitoso', 'success');
+                        cerrarModalCobro();
+                        cargarPendientes();
+                        
+                        // Cargar orden e imprimir usando funciones de printing.js
+                        try {
+                            const orderResponse = await fetch(`/api/orders/${ordenSeleccionada}`);
+                            const order = await orderResponse.json();
+                            if (order) {
+                                if (typeof window.cargarOrdenParaImprimir === 'function') {
+                                    await window.cargarOrdenParaImprimir(order);
+                                } else {
+                                    // Fallback manual
+                                    window.carrito = [];
+                                    let items = [];
+                                    try { items = JSON.parse(order.items || '[]'); } catch(e) {}
+                                    items.forEach(item => {
+                                        window.carrito.push({
+                                            id: item.product_id || Date.now(),
+                                            nombre: item.nombre,
+                                            precio: item.precio_unitario || item.precio || 0,
+                                            cantidad: item.cantidad
+                                        });
+                                    });
+                                    if (order.cliente) {
+                                        const clienteInput = document.getElementById('cliente');
+                                        if (clienteInput) clienteInput.value = order.cliente;
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('⚠️ Error cargando orden para imprimir:', e);
+                        }
+                        
+                        // Imprimir usando funciones de printing.js
+                        try {
+                            if (typeof window.imprimirTicketAutomatico === 'function') {
+                                if (window.impresoraConectadaGlobal || window.modoSimulacionGlobal) {
+                                    const impreso = await window.imprimirTicketAutomatico();
+                                    if (impreso) {
+                                        await window.abrirCajaDespuesDeCobro();
+                                    }
+                                } else {
+                                    mostrarNotificacion('⚠️ Impresora no conectada. Conéctala desde la caja.', 'warning');
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('⚠️ Error imprimiendo:', e);
+                        }
+                        
+                        window.carrito = [];
+                        socket.emit('estado-actualizado', { orderId: ordenSeleccionada, estado: 'pagado' });
+                        
+                    } else {
+                        alert('❌ Error: ' + (data.error || 'desconocido'));
+                    }
+                } catch (error) {
+                    console.error('Error en cobro:', error);
+                    alert('❌ Error de conexión');
+                }
+            }
+
+            // ==================== UTILIDADES ====================
+            function cerrarModalCobro() {
+                const modal = document.getElementById('modalCobro');
+                if (modal) modal.style.display = 'none';
+                ordenSeleccionada = null;
+                metodoPago = 'Efectivo';
+            }
+
+            function escapeHtml(str) {
+                if (!str) return '';
+                return str.replace(/[&<>]/g, function(m) {
+                    if (m === '&') return '&amp;';
+                    if (m === '<') return '&lt;';
+                    if (m === '>') return '&gt;';
+                    return m;
+                });
+            }
+
+            function mostrarNotificacion(mensaje, tipo) {
+                const div = document.createElement('div');
+                div.className = `alert alert-${tipo} position-fixed top-0 end-0 m-3 shadow`;
+                div.style.zIndex = '9999';
+                div.innerHTML = mensaje;
+                document.body.appendChild(div);
+                setTimeout(() => div.remove(), 3000);
+            }
+
+            // ==================== SOCKET EVENTS ====================
+            socket.on('estado-actualizado', () => {
+                cargarPendientes();
+            });
+            socket.on('orden-pagada', () => {
+                cargarPendientes();
+            });
+
+            // ==================== INICIO ====================
+            cargarPendientes();
+            setInterval(cargarPendientes, 10000);
+            console.log('✅ pending-payment listo');
         });
-    }
-
-    function mostrarNotificacion(mensaje, tipo) {
-        const div = document.createElement('div');
-        div.className = `alert alert-${tipo} position-fixed top-0 end-0 m-3 shadow`;
-        div.style.zIndex = '9999';
-        div.innerHTML = mensaje;
-        document.body.appendChild(div);
-        setTimeout(() => div.remove(), 3000);
-    }
-
-    // ==================== EVENTOS SOCKET ====================
-    socket.on('estado-actualizado', () => {
-        cargarPendientes();
-    });
-    socket.on('orden-pagada', () => {
-        cargarPendientes();
-    });
-
-    // ==================== INICIO ====================
-    cargarPendientes();
-    setInterval(cargarPendientes, 10000);
-    console.log('✅ pending-payment listo');
-</script>
+    </script>
 </body>
 </html>

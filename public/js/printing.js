@@ -509,6 +509,36 @@ function mostrarNotificacion(mensaje, tipo) {
     setTimeout(() => div.remove(), 4000);
 }
 
+// ==================== CARGAR ORDEN PARA IMPRIMIR ====================
+async function cargarOrdenParaImprimir(order) {
+    if (!order) return false;
+    
+    try {
+        window.carrito = [];
+        let items = [];
+        try { items = JSON.parse(order.items || '[]'); } catch(e) {}
+        items.forEach(item => {
+            window.carrito.push({
+                id: item.product_id || Date.now(),
+                nombre: item.nombre,
+                precio: item.precio_unitario || item.precio || 0,
+                cantidad: item.cantidad
+            });
+        });
+        if (order.cliente) {
+            const clienteInput = document.getElementById('cliente');
+            if (clienteInput) clienteInput.value = order.cliente;
+        }
+        return true;
+    } catch (error) {
+        console.error('Error cargando orden:', error);
+        return false;
+    }
+}
+
+// Exponer función global
+window.cargarOrdenParaImprimir = cargarOrdenParaImprimir;
+
 // ==================== EXPONER FUNCIONES GLOBALES ====================
 window.conectarImpresora = conectarImpresora;
 window.imprimirTicketAutomatico = imprimirTicketAutomatico;
