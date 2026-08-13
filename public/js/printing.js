@@ -4,6 +4,8 @@ var bluetoothCharacteristicGlobal = null;
 var bluetoothServerGlobal = null;
 var impresoraConectadaGlobal = false;
 var modoSimulacionGlobal = false;
+var heartbeatInterval = null;
+var reconectando = false;
 
 // ==================== DETECCIÓN DE ENTORNO ====================
 function isLocalhost() {
@@ -57,6 +59,29 @@ function verificarConexionImpresora() {
     return conectada;
 }
 
+// ==================== HEARTBEAT - MANTENER CONEXIÓN ACTIVA ====================
+function iniciarHeartbeat() {
+    if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+    }
+    
+    heartbeatInterval = setInterval(async () => {
+        if (impresoraConectadaGlobal && bluetoothCharacteristicGlobal && bluetoothServerGlobal) {
+            try {
+                // Enviar un comando de estado (sin afectar la impresión)
+                await bluetoothCharacteristicGlobal.readValue();
+                console.log('💓 Heartbeat: conexión activa');
+            } catch (e) {
+                console.log('⚠️ Heartbeat: conexión perdida, reconectando...');
+                impresoraConectadaGlobal = false;
+                bluetoothCharacteristicGlobal = null;
+                bluetoothServerGlobal = null;
+                // No reconectar automáticamente, esperar a que el usuario lo haga
+            }
+        }
+    }, 10000); // Cada 10 segundos
+}
+
 // ==================== INICIALIZACIÓN ====================
 document.addEventListener('DOMContentLoaded', () => {
     console.log('🔄 Inicializando módulo de impresión...');
@@ -80,6 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     verificarConexionImpresora();
+    iniciarHeartbeat();
 });
 
 // ==================== CONECTAR IMPRESORA ====================
@@ -89,19 +115,44 @@ async function conectarImpresora() {
         return true;
     }
     
-    // Si ya hay conexión activa, verificarla
+    // Si ya hay conexión activa, usarla
     if (bluetoothCharacteristicGlobal && bluetoothServerGlobal) {
         try {
-            // Verificar si la conexión sigue viva
             await bluetoothCharacteristicGlobal.readValue();
             console.log('✅ Conexión existente activa');
             impresoraConectadaGlobal = true;
             return true;
         } catch (e) {
-            console.log('⚠️ Conexión existente caducada, reconectando...');
+            console.log('⚠️ Conexión existente caducada');
             bluetoothCharacteristicGlobal = null;
             bluetoothServerGlobal = null;
             impresoraConectadaGlobal = false;
+        }
+    }
+    
+    // Si ya tenemos un dispositivo guardado, intentar reconectar sin diálogo
+    if (bluetoothDeviceGlobal) {
+        try {
+            console.log('🔄 Intentando reconectar a dispositivo guardado...');
+            bluetoothServerGlobal = await bluetoothDeviceGlobal.gatt.connect();
+            const service = await bluetoothServerGlobal.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+            bluetoothCharacteristicGlobal = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+            
+            impresoraConectadaGlobal = true;
+            localStorage.setItem('impresoraConectada', 'true');
+            const nombre = localStorage.getItem('impresoraNombre') || 'Impresora';
+            
+            const btn = document.getElementById('btnConectarImpresora');
+            if (btn) {
+                btn.innerHTML = `<i class="fas fa-bluetooth"></i> ${nombre} ✅`;
+                btn.className = 'btn btn-success w-100 mb-2 fw-bold py-2';
+            }
+            
+            mostrarNotificacion('✅ Impresora reconectada', 'success');
+            return true;
+        } catch (e) {
+            console.log('⚠️ Error reconectando:', e.message);
+            bluetoothDeviceGlobal = null;
         }
     }
     
@@ -166,7 +217,6 @@ async function conectarImpresora() {
 
 // ==================== ENVIAR DATOS A IMPRESORA ====================
 async function enviarAImpresora(ticket) {
-    // Si estamos en modo simulación
     if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
         console.log('📄 TICKET (SIMULACIÓN):');
         console.log('='.repeat(40));
@@ -177,10 +227,11 @@ async function enviarAImpresora(ticket) {
     
     // Verificar conexión
     if (!bluetoothCharacteristicGlobal || !bluetoothServerGlobal) {
-        console.log('🔄 Conexión perdida, reconectando...');
+        console.log('🔄 Conexión perdida, intentando reconectar...');
         const conectado = await conectarImpresora();
         if (!conectado) {
-            throw new Error('Impresora no conectada');
+            mostrarNotificacion('⚠️ Conecta la impresora manualmente con el botón', 'warning');
+            return false;
         }
     }
     
@@ -191,19 +242,26 @@ async function enviarAImpresora(ticket) {
         console.log('🔄 Conexión inactiva, reconectando...');
         const conectado = await conectarImpresora();
         if (!conectado) {
-            throw new Error('No se pudo reconectar la impresora');
+            mostrarNotificacion('⚠️ Conecta la impresora manualmente con el botón', 'warning');
+            return false;
         }
     }
     
     // Enviar datos
-    const encoder = new TextEncoder();
-    const data = encoder.encode(ticket);
-    await bluetoothCharacteristicGlobal.writeValue(data);
-    
-    // Esperar un momento para que la impresora procese
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    return true;
+    try {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(ticket);
+        await bluetoothCharacteristicGlobal.writeValue(data);
+        await new Promise(resolve => setTimeout(resolve, 300));
+        return true;
+    } catch (error) {
+        console.error('❌ Error enviando datos:', error);
+        // Si falla, marcar como desconectado para reconectar en el próximo intento
+        impresoraConectadaGlobal = false;
+        bluetoothCharacteristicGlobal = null;
+        bluetoothServerGlobal = null;
+        throw error;
+    }
 }
 
 // ==================== CONSTRUIR TICKET ====================
@@ -266,7 +324,7 @@ async function imprimirTicketAutomatico() {
     }
 }
 
-// ==================== IMPRIMIR TICKET DE CIERRE ====================
+// ==================== TICKET DE CIERRE ====================
 function construirTicketCierre(cierre) {
     const fecha = new Date().toLocaleString();
     let ticket = '';
@@ -315,6 +373,16 @@ async function imprimirTicketCierre(cierre) {
         console.error('❌ No hay datos de cierre');
         mostrarNotificacion('❌ No hay datos de cierre para imprimir', 'danger');
         return false;
+    }
+    
+    // Verificar conexión primero
+    if (!impresoraConectadaGlobal || !bluetoothCharacteristicGlobal || !bluetoothServerGlobal) {
+        console.log('🔄 Impresora no conectada, intentando conectar...');
+        const conectado = await conectarImpresora();
+        if (!conectado) {
+            mostrarNotificacion('⚠️ Conecta la impresora para imprimir el cierre', 'warning');
+            return false;
+        }
     }
     
     if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
