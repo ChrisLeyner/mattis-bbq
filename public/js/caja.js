@@ -109,7 +109,16 @@ async function cerrarTurno() {
 
             // --- 2. Imprimir ticket de cierre ---
             const cierre = data.cierre;
-            await imprimirTicketCierre(cierre);
+            console.log('📄 Datos de cierre recibidos:', cierre);
+            
+            // Verificar que la función existe
+            if (typeof window.imprimirTicketCierre === 'function') {
+                console.log('🖨️ Imprimiendo ticket de cierre...');
+                await window.imprimirTicketCierre(cierre);
+            } else {
+                console.error('❌ función imprimirTicketCierre no disponible');
+                mostrarNotificacion('⚠️ No se pudo imprimir ticket de cierre', 'warning');
+            }
 
             mostrarNotificacion('✅ Turno cerrado. PDF y ticket de cierre generados.', 'success');
             
@@ -121,8 +130,29 @@ async function cerrarTurno() {
             mostrarNotificacion('❌ Error: ' + (data.error || 'desconocido'), 'danger');
         }
     } catch (error) {
-        console.error(error);
+        console.error('Error en cierre:', error);
         mostrarNotificacion('❌ Error de conexión', 'danger');
+    }
+}
+
+// Convertir base64 a Blob
+function base64ToBlob(base64, mimeType) {
+    try {
+        const byteCharacters = atob(base64);
+        const byteArrays = [];
+        for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+            const slice = byteCharacters.slice(offset, offset + 512);
+            const byteNumbers = new Array(slice.length);
+            for (let i = 0; i < slice.length; i++) {
+                byteNumbers[i] = slice.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            byteArrays.push(byteArray);
+        }
+        return new Blob(byteArrays, { type: mimeType });
+    } catch (e) {
+        console.error('Error convirtiendo base64:', e);
+        return null;
     }
 }
 

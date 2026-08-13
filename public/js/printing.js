@@ -303,7 +303,6 @@ async function cobrarConTicket() {
         // Restaurar carrito temporalmente para imprimir
         window.carrito = savedTicket.carrito;
         document.getElementById('cliente').value = savedTicket.cliente;
-        // Forzar el método de pago
         const metodoSelect = document.getElementById('metodoPago');
         if (metodoSelect) metodoSelect.value = savedTicket.metodoPago;
     }
@@ -317,6 +316,21 @@ async function cobrarConTicket() {
     // Abrir caja si se imprimió correctamente
     if (impreso) {
         await abrirCajaDespuesDeCobro();
+    }
+    
+    // ✅ LIMPIAR EL CARRITO DESPUÉS DE IMPRIMIR
+    if (typeof window.limpiarCarrito === 'function') {
+        window.limpiarCarrito();
+        console.log('🧹 Carrito limpiado después de imprimir');
+    } else {
+        // Fallback: limpiar manualmente
+        window.carrito = [];
+        const clienteInput = document.getElementById('cliente');
+        if (clienteInput) clienteInput.value = '';
+        const cartItems = document.getElementById('cartItems');
+        if (cartItems) cartItems.innerHTML = '<p class="text-muted text-center">Carrito vacío</p>';
+        const totalSpan = document.getElementById('cartTotal');
+        if (totalSpan) totalSpan.innerText = '$0.00';
     }
     
     return impreso;
