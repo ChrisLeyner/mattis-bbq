@@ -215,7 +215,7 @@ async function conectarImpresora() {
     }
 }
 
-// ==================== ENVIAR DATOS A IMPRESORA ====================
+// ==================== ENVIAR DATOS A IMPRESORA (CON CHUNKING) ====================
 async function enviarAImpresora(ticket) {
     if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
         console.log('📄 TICKET (SIMULACIÓN):');
@@ -247,16 +247,27 @@ async function enviarAImpresora(ticket) {
         }
     }
     
-    // Enviar datos
+    // Enviar datos en chunks (512 bytes máximos)
     try {
         const encoder = new TextEncoder();
         const data = encoder.encode(ticket);
-        await bluetoothCharacteristicGlobal.writeValue(data);
+        const chunkSize = 480; // Un poco menos de 512 para margen
+        let offset = 0;
+        
+        while (offset < data.length) {
+            const chunk = data.slice(offset, offset + chunkSize);
+            await bluetoothCharacteristicGlobal.writeValue(chunk);
+            offset += chunkSize;
+            // Pequeña pausa entre chunks
+            if (offset < data.length) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+        
         await new Promise(resolve => setTimeout(resolve, 300));
         return true;
     } catch (error) {
         console.error('❌ Error enviando datos:', error);
-        // Si falla, marcar como desconectado para reconectar en el próximo intento
         impresoraConectadaGlobal = false;
         bluetoothCharacteristicGlobal = null;
         bluetoothServerGlobal = null;
@@ -324,44 +335,46 @@ async function imprimirTicketAutomatico() {
     }
 }
 
-// ==================== TICKET DE CIERRE ====================
+// ==================== TICKET DE CIERRE (VERSIÓN CORTA) ====================
 function construirTicketCierre(cierre) {
     const fecha = new Date().toLocaleString();
     let ticket = '';
     
     const LINE_FEED = '\x0A';
-    const SEPARATOR = '='.repeat(32) + LINE_FEED;
-    const DOUBLE_SEPARATOR = '='.repeat(32) + LINE_FEED;
+    const SEPARATOR = '--------------------' + LINE_FEED;
+    const DOUBLE_SEPARATOR = '====================' + LINE_FEED;
     
-    ticket += '    MATTI\'S B-B-Q' + LINE_FEED;
-    ticket += '  CIERRE DE TURNO' + LINE_FEED;
+    // Encabezado (más compacto)
+    ticket += 'MATTI\'S B-B-Q' + LINE_FEED;
+    ticket += 'CIERRE DE TURNO' + LINE_FEED;
     ticket += SEPARATOR;
     ticket += `Fecha: ${fecha}` + LINE_FEED;
     if (cierre.fechaApertura) {
-        ticket += `Apertura: ${new Date(cierre.fechaApertura).toLocaleString()}` + LINE_FEED;
+        ticket += `Apertura: ${new Date(cierre.fechaApertura).toLocaleString().slice(0, 16)}` + LINE_FEED;
     }
     ticket += SEPARATOR + LINE_FEED;
     
-    ticket += 'RESUMEN DE VENTAS' + LINE_FEED;
-    ticket += SEPARATOR;
-    ticket += `Fondo inicial: $${(cierre.fondoInicial || 0).toFixed(2)} MXN` + LINE_FEED;
+    // Resumen de ventas (abreviado)
+    ticket += `Fondo: $${(cierre.fondoInicial || 0).toFixed(2)} MXN` + LINE_FEED;
     ticket += `Efectivo: $${(cierre.ventasEfectivo || 0).toFixed(2)} MXN` + LINE_FEED;
     ticket += `Tarjeta: $${(cierre.ventasTarjeta || 0).toFixed(2)} MXN` + LINE_FEED;
-    ticket += `Transferencia: $${(cierre.ventasTransferencia || 0).toFixed(2)} MXN` + LINE_FEED;
-    ticket += `Dólares: $${(cierre.ventasDolaresUSD || 0).toFixed(2)} USD` + LINE_FEED;
-    ticket += ` (equiv. $${(cierre.ventasDolaresMXN || 0).toFixed(2)} MXN)` + LINE_FEED;
+    ticket += `Transf.: $${(cierre.ventasTransferencia || 0).toFixed(2)} MXN` + LINE_FEED;
+    if (cierre.ventasDolaresUSD > 0) {
+        ticket += `Dólares: $${(cierre.ventasDolaresUSD || 0).toFixed(2)} USD` + LINE_FEED;
+    }
     ticket += SEPARATOR + LINE_FEED;
     
-    ticket += `TOTAL VENDIDO: $${(cierre.totalVendidoMXN || 0).toFixed(2)} MXN` + LINE_FEED;
+    // Totales
+    ticket += `TOTAL: $${(cierre.totalVendidoMXN || 0).toFixed(2)} MXN` + LINE_FEED;
     ticket += DOUBLE_SEPARATOR;
-    ticket += `EFECTIVO EN CAJA:` + LINE_FEED;
-    ticket += ` MXN: $${(cierre.efectivoEnCajaMXN || 0).toFixed(2)}` + LINE_FEED;
-    ticket += ` USD: $${(cierre.ventasDolaresUSD || 0).toFixed(2)}` + LINE_FEED;
+    ticket += `CAJA MXN: $${(cierre.efectivoEnCajaMXN || 0).toFixed(2)}` + LINE_FEED;
+    if (cierre.ventasDolaresUSD > 0) {
+        ticket += `CAJA USD: $${(cierre.ventasDolaresUSD || 0).toFixed(2)}` + LINE_FEED;
+    }
     ticket += DOUBLE_SEPARATOR + LINE_FEED;
     
-    ticket += '¡Gracias por su visita!' + LINE_FEED;
-    ticket += '¡Vuelva pronto!' + LINE_FEED + LINE_FEED;
-    ticket += '\x1D\x56\x00';
+    ticket += '¡Gracias!' + LINE_FEED;
+    ticket += '\x1D\x56\x00'; // Cortar papel
     
     return ticket;
 }
