@@ -99,6 +99,21 @@ async function conectarImpresora() {
         return false;
     }
     
+    // Si ya hay un dispositivo conectado y funcional, usarlo
+    if (bluetoothDeviceGlobal && bluetoothCharacteristicGlobal) {
+        try {
+            // Verificar que la conexión sigue activa
+            await bluetoothCharacteristicGlobal.readValue();
+            console.log('✅ Impresora ya conectada y funcional');
+            impresoraConectadaGlobal = true;
+            return true;
+        } catch (e) {
+            console.log('⚠️ Conexión existente no funcional, reconectando...');
+            bluetoothCharacteristicGlobal = null;
+            impresoraConectadaGlobal = false;
+        }
+    }
+    
     try {
         mostrarNotificacion('🔍 Buscando impresora Bluetooth...', 'info');
         
@@ -191,15 +206,8 @@ function construirTicket(cliente, metodoPago, total) {
 async function imprimirTicketAutomatico() {
     // Verificar que hay productos en el carrito
     if (!window.carrito || window.carrito.length === 0) {
-        // Intentar recuperar de localStorage
-        const savedTicket = JSON.parse(localStorage.getItem('ticketData') || 'null');
-        if (savedTicket && savedTicket.carrito && savedTicket.carrito.length > 0) {
-            console.log('🔄 Recuperando carrito guardado para imprimir...');
-            window.carrito = savedTicket.carrito;
-        } else {
-            console.log('⚠️ No hay productos para imprimir');
-            return false;
-        }
+        console.log('⚠️ No hay productos para imprimir');
+        return false;
     }
     
     const cliente = document.getElementById('cliente')?.value || 'Cliente';
@@ -220,11 +228,25 @@ async function imprimirTicketAutomatico() {
         return true;
     }
     
-    // Verificar conexión real
+    // ✅ VERIFICAR Y RECONECTAR SI ES NECESARIO
     if (!impresoraConectadaGlobal || !bluetoothCharacteristicGlobal) {
+        console.log('🔄 Impresora desconectada, intentando reconectar...');
         const conectado = await conectarImpresora();
         if (!conectado) {
             mostrarNotificacion('⚠️ Conecta la impresora primero o activa modo simulación', 'warning');
+            return false;
+        }
+    }
+    
+    // ✅ VERIFICAR QUE LA CONEXIÓN SIGA ACTIVA
+    try {
+        // Intentar leer el valor para verificar conexión (opcional)
+        await bluetoothCharacteristicGlobal.readValue();
+    } catch (e) {
+        console.log('🔄 Conexión inactiva, reconectando...');
+        const conectado = await conectarImpresora();
+        if (!conectado) {
+            mostrarNotificacion('⚠️ No se pudo reconectar la impresora', 'warning');
             return false;
         }
     }
@@ -239,6 +261,25 @@ async function imprimirTicketAutomatico() {
         return true;
     } catch (error) {
         console.error('Error imprimiendo:', error);
+        
+        // ✅ SI FALLA, INTENTAR RECONECTAR Y REINTENTAR UNA VEZ
+        if (error.message.includes('disconnected') || error.message.includes('GATT')) {
+            console.log('🔄 Reintentando con reconexión...');
+            const conectado = await conectarImpresora();
+            if (conectado) {
+                try {
+                    const ticket = construirTicket(cliente, metodoPago, total);
+                    const encoder = new TextEncoder();
+                    const data = encoder.encode(ticket);
+                    await bluetoothCharacteristicGlobal.writeValue(data);
+                    mostrarNotificacion('✅ Ticket impreso (reconectado)', 'success');
+                    return true;
+                } catch (retryError) {
+                    console.error('❌ Error en reintento:', retryError);
+                }
+            }
+        }
+        
         mostrarNotificacion('❌ Error al imprimir: ' + error.message, 'danger');
         return false;
     }
@@ -351,49 +392,15 @@ function mostrarNotificacion(mensaje, tipo) {
 async function imprimirTicketCierre(cierre) {
     console.log('🔄 Imprimiendo ticket de cierre...');
     
-    const fecha = new Date().toLocaleString();
-    let ticket = '';
+    if (!cierre) {
+        console.error('❌ No hay datos de cierre');
+        mostrarNotificacion('❌ No hay datos de cierre para imprimir', 'danger');
+        return false;
+    }
     
-    const LINE_FEED = '\x0A';
-    const SEPARATOR = '='.repeat(32) + LINE_FEED;
-    const DOUBLE_SEPARATOR = '='.repeat(32) + LINE_FEED;
-    
-    // Encabezado (tamaño grande para resaltar)
-    ticket += '    MATTI\'S B-B-Q' + LINE_FEED;
-    ticket += '  CIERRE DE TURNO' + LINE_FEED;
-    ticket += SEPARATOR;
-    ticket += `Fecha: ${fecha}` + LINE_FEED;
-    ticket += `Apertura: ${new Date(cierre.fechaApertura).toLocaleString()}` + LINE_FEED;
-    ticket += SEPARATOR + LINE_FEED;
-    
-    // Resumen de ventas
-    ticket += 'RESUMEN DE VENTAS' + LINE_FEED;
-    ticket += SEPARATOR;
-    ticket += `Fondo inicial: $${cierre.fondoInicial.toFixed(2)} MXN` + LINE_FEED;
-    ticket += `Efectivo: $${cierre.ventasEfectivo.toFixed(2)} MXN` + LINE_FEED;
-    ticket += `Tarjeta: $${cierre.ventasTarjeta.toFixed(2)} MXN` + LINE_FEED;
-    ticket += `Transferencia: $${cierre.ventasTransferencia.toFixed(2)} MXN` + LINE_FEED;
-    ticket += `Dólares: $${cierre.ventasDolaresUSD.toFixed(2)} USD` + LINE_FEED;
-    ticket += ` (equiv. $${cierre.ventasDolaresMXN.toFixed(2)} MXN)` + LINE_FEED;
-    ticket += SEPARATOR + LINE_FEED;
-    
-    // Totales
-    ticket += `TOTAL VENDIDO: $${cierre.totalVendidoMXN.toFixed(2)} MXN` + LINE_FEED;
-    ticket += DOUBLE_SEPARATOR;
-    ticket += `EFECTIVO EN CAJA:` + LINE_FEED;
-    ticket += ` MXN: $${cierre.efectivoEnCajaMXN.toFixed(2)}` + LINE_FEED;
-    ticket += ` USD: $${cierre.ventasDolaresUSD.toFixed(2)}` + LINE_FEED;
-    ticket += DOUBLE_SEPARATOR + LINE_FEED;
-    
-    ticket += '¡Gracias por su visita!' + LINE_FEED;
-    ticket += '¡Vuelva pronto!' + LINE_FEED + LINE_FEED;
-    
-    // Cortar papel
-    ticket += '\x1D\x56\x00';
-    
-    // --- Imprimir el ticket ---
     // Si estamos en modo simulación
     if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
+        const ticket = construirTicketCierre(cierre);
         console.log('📄 TICKET DE CIERRE (SIMULACIÓN)');
         console.log('='.repeat(40));
         console.log(ticket);
@@ -402,8 +409,9 @@ async function imprimirTicketCierre(cierre) {
         return true;
     }
     
-    // Verificar conexión real
+    // ✅ VERIFICAR Y RECONECTAR ANTES DE IMPRIMIR EL CIERRE
     if (!impresoraConectadaGlobal || !bluetoothCharacteristicGlobal) {
+        console.log('🔄 Impresora desconectada, intentando reconectar para cierre...');
         const conectado = await conectarImpresora();
         if (!conectado) {
             mostrarNotificacion('⚠️ Conecta la impresora para imprimir el cierre', 'warning');
@@ -411,8 +419,21 @@ async function imprimirTicketCierre(cierre) {
         }
     }
     
+    // ✅ VERIFICAR QUE LA CONEXIÓN SIGA ACTIVA
+    try {
+        await bluetoothCharacteristicGlobal.readValue();
+    } catch (e) {
+        console.log('🔄 Conexión inactiva para cierre, reconectando...');
+        const conectado = await conectarImpresora();
+        if (!conectado) {
+            mostrarNotificacion('⚠️ No se pudo reconectar la impresora para el cierre', 'warning');
+            return false;
+        }
+    }
+    
     try {
         mostrarNotificacion('🖨️ Imprimiendo ticket de cierre...', 'info');
+        const ticket = construirTicketCierre(cierre);
         const encoder = new TextEncoder();
         const data = encoder.encode(ticket);
         await bluetoothCharacteristicGlobal.writeValue(data);
@@ -423,6 +444,48 @@ async function imprimirTicketCierre(cierre) {
         mostrarNotificacion('❌ Error al imprimir cierre: ' + error.message, 'danger');
         return false;
     }
+}
+
+// Función auxiliar para construir ticket de cierre
+function construirTicketCierre(cierre) {
+    const fecha = new Date().toLocaleString();
+    let ticket = '';
+    
+    const LINE_FEED = '\x0A';
+    const SEPARATOR = '='.repeat(32) + LINE_FEED;
+    const DOUBLE_SEPARATOR = '='.repeat(32) + LINE_FEED;
+    
+    ticket += '    MATTI\'S B-B-Q' + LINE_FEED;
+    ticket += '  CIERRE DE TURNO' + LINE_FEED;
+    ticket += SEPARATOR;
+    ticket += `Fecha: ${fecha}` + LINE_FEED;
+    if (cierre.fechaApertura) {
+        ticket += `Apertura: ${new Date(cierre.fechaApertura).toLocaleString()}` + LINE_FEED;
+    }
+    ticket += SEPARATOR + LINE_FEED;
+    
+    ticket += 'RESUMEN DE VENTAS' + LINE_FEED;
+    ticket += SEPARATOR;
+    ticket += `Fondo inicial: $${(cierre.fondoInicial || 0).toFixed(2)} MXN` + LINE_FEED;
+    ticket += `Efectivo: $${(cierre.ventasEfectivo || 0).toFixed(2)} MXN` + LINE_FEED;
+    ticket += `Tarjeta: $${(cierre.ventasTarjeta || 0).toFixed(2)} MXN` + LINE_FEED;
+    ticket += `Transferencia: $${(cierre.ventasTransferencia || 0).toFixed(2)} MXN` + LINE_FEED;
+    ticket += `Dólares: $${(cierre.ventasDolaresUSD || 0).toFixed(2)} USD` + LINE_FEED;
+    ticket += ` (equiv. $${(cierre.ventasDolaresMXN || 0).toFixed(2)} MXN)` + LINE_FEED;
+    ticket += SEPARATOR + LINE_FEED;
+    
+    ticket += `TOTAL VENDIDO: $${(cierre.totalVendidoMXN || 0).toFixed(2)} MXN` + LINE_FEED;
+    ticket += DOUBLE_SEPARATOR;
+    ticket += `EFECTIVO EN CAJA:` + LINE_FEED;
+    ticket += ` MXN: $${(cierre.efectivoEnCajaMXN || 0).toFixed(2)}` + LINE_FEED;
+    ticket += ` USD: $${(cierre.ventasDolaresUSD || 0).toFixed(2)}` + LINE_FEED;
+    ticket += DOUBLE_SEPARATOR + LINE_FEED;
+    
+    ticket += '¡Gracias por su visita!' + LINE_FEED;
+    ticket += '¡Vuelva pronto!' + LINE_FEED + LINE_FEED;
+    ticket += '\x1D\x56\x00';
+    
+    return ticket;
 }
 
 // Exponer funciones globales
