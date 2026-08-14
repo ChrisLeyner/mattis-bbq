@@ -6,8 +6,11 @@ let socket = io();
 let turnoAbierto = false;
 let ordenSeleccionada = null;
 let tipoCambioUSD = localStorage.getItem('tipoCambioUSD') ? parseFloat(localStorage.getItem('tipoCambioUSD')) : 17.00;
-
+// Al inicio de caja.js (después de let carrito = [];)
+window.ordenSeleccionada = null;
 // Al cargar, verificar conexión de impresora
+
+
 document.addEventListener('DOMContentLoaded', () => {
     verificarConexionImpresora();
     // ... resto del código existente
@@ -418,6 +421,9 @@ async function cargarOrdenAlCarrito(orderId) {
         const response = await fetch(`/api/orders/${orderId}`);
         const order = await response.json();
         if (order) {
+            // Guardar el ID de la orden pendiente
+            window.ordenSeleccionada = orderId;
+            
             limpiarCarrito();
             let items = [];
             try { items = JSON.parse(order.items || '[]'); } catch(e) {}
@@ -661,16 +667,25 @@ function renderizarCobrosPendientes(orders) {
 
 // Cargar orden al carrito y mostrar sección de cobro
 function cargarOrdenYMostrarCobro(orderId, cliente, total) {
+    // Guardar el ID de la orden para procesar después
+    ordenSeleccionada = orderId;
+    
     // Cargar la orden al carrito
     cargarOrdenAlCarrito(orderId);
+    
     // Mostrar sección de ventas
     mostrarSeccion('ventas');
+    
     // Establecer cliente y total
     document.getElementById('cliente').value = cliente;
+    
     // Actualizar carrito
     actualizarCarrito();
+    
     // Mostrar notificación
-    mostrarNotificacion(`📋 Orden de ${cliente} cargada ($${total.toFixed(2)})`, 'success');
+    mostrarNotificacion(`📋 Orden de ${cliente} cargada ($${total.toFixed(2)}) - Confirma el cobro`, 'success');
+
+    window.ordenSeleccionada = orderId;
 }
 
 // Modificar mostrarSeccion para incluir cobros
@@ -681,9 +696,11 @@ function mostrarSeccion(seccion) {
 }
 
 // ========== SOCKET EVENTS ==========
-socket.on('estado-actualizado', () => {
-    if (document.getElementById('seccionOrdenes').style.display === 'block') {
-        cargarOrdenesPendientesCobro();
+socket.on('estado-actualizado', (data) => {
+    console.log('📨 Estado actualizado:', data);
+    // Recargar pendientes si la sección está visible
+    if (document.getElementById('seccionCobrosPendientes')?.style.display === 'block') {
+        cargarCobrosPendientes();
     }
     const audio = document.getElementById('notificacion');
     audio.play().catch(e => console.log('Audio no permitido'));

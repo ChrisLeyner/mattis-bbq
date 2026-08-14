@@ -487,7 +487,6 @@ async function abrirCajaDespuesDeCobro() {
     }
 }
 
-// ==================== COBRAR CON TICKET ====================
 async function cobrarConTicket() {
     console.log('🔄 Procesando cobro con ticket...');
     
@@ -500,6 +499,55 @@ async function cobrarConTicket() {
     
     localStorage.setItem('ticketData', JSON.stringify(ticketData));
     
+    // Verificar si es una orden pendiente (ordenSeleccionada tiene valor)
+    if (window.ordenSeleccionada) {
+        console.log(`💰 Cobrando orden pendiente ID: ${window.ordenSeleccionada}`);
+        
+        // Marcar como pagado en el servidor
+        try {
+            const metodoPago = document.getElementById('metodoPago')?.value || 'Efectivo';
+            let metodoReal = metodoPago;
+            let total_usd = 0;
+            if (metodoReal === 'USD') {
+                total_usd = parseFloat(document.getElementById('input-recibido-usd')?.value) || 0;
+                metodoReal = 'Dólares';
+            }
+            
+            const response = await fetch(`/api/orders/${window.ordenSeleccionada}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    estado: 'pagado',
+                    metodo_pago: metodoReal,
+                    total_usd: total_usd
+                })
+            });
+            const data = await response.json();
+            
+            if (response.ok && data.success) {
+                console.log(`✅ Orden ${window.ordenSeleccionada} marcada como pagada`);
+                
+                // Recargar lista de pendientes si la sección está visible
+                if (typeof window.cargarCobrosPendientes === 'function') {
+                    setTimeout(() => window.cargarCobrosPendientes(), 500);
+                }
+                
+                // Notificar por socket
+                if (typeof window.socket !== 'undefined') {
+                    window.socket.emit('estado-actualizado', { 
+                        orderId: window.ordenSeleccionada, 
+                        estado: 'pagado' 
+                    });
+                }
+            } else {
+                console.error('Error al marcar orden como pagada:', data.error);
+            }
+        } catch (error) {
+            console.error('Error al cobrar orden pendiente:', error);
+        }
+    }
+    
+    // Ejecutar el cobro normal
     if (typeof window.procesarPago === 'function') {
         await window.procesarPago();
     } else {
@@ -526,19 +574,25 @@ async function cobrarConTicket() {
         await abrirCajaDespuesDeCobro();
     }
     
-    if (typeof window.limpiarCarrito === 'function') {
-        window.limpiarCarrito();
-        console.log('🧹 Carrito limpiado después de imprimir');
-    } else {
-        window.carrito = [];
-        const clienteInput = document.getElementById('cliente');
-        if (clienteInput) clienteInput.value = '';
-        const cartItems = document.getElementById('cartItems');
-        if (cartItems) cartItems.innerHTML = '<p class="text-muted text-center">Carrito vacío</p>';
-        const totalSpan = document.getElementById('cartTotal');
-        if (totalSpan) totalSpan.innerText = '$0.00';
+    // Limpiar carrito y orden seleccionada
+    window.carrito = [];
+    if (window.ordenSeleccionada) {
+        // Recargar pendientes nuevamente
+        if (typeof window.cargarCobrosPendientes === 'function') {
+            setTimeout(() => window.cargarCobrosPendientes(), 1000);
+        }
+        window.ordenSeleccionada = null;
     }
     
+    // Limpiar UI del carrito
+    const clienteInput = document.getElementById('cliente');
+    if (clienteInput) clienteInput.value = '';
+    const cartItems = document.getElementById('cartItems');
+    if (cartItems) cartItems.innerHTML = '<p class="text-muted text-center">Carrito vacío</p>';
+    const totalSpan = document.getElementById('cartTotal');
+    if (totalSpan) totalSpan.innerText = '$0.00';
+    
+    console.log('🧹 Carrito limpiado después de imprimir');
     return impreso;
 }
 
