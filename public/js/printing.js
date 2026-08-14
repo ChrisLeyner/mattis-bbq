@@ -130,29 +130,39 @@ async function conectarImpresora() {
         }
     }
     
-    // Si ya tenemos un dispositivo guardado, intentar reconectar sin diálogo
-    if (bluetoothDeviceGlobal) {
+    // Intentar reconectar a dispositivo guardado SIN mostrar diálogo
+    const deviceInfo = obtenerDispositivoGuardado();
+    if (deviceInfo) {
         try {
-            console.log('🔄 Intentando reconectar a dispositivo guardado...');
-            bluetoothServerGlobal = await bluetoothDeviceGlobal.gatt.connect();
-            const service = await bluetoothServerGlobal.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
-            bluetoothCharacteristicGlobal = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+            console.log('🔄 Intentando reconectar a dispositivo guardado:', deviceInfo.name);
+            // Encontrar el dispositivo por ID (si está disponible)
+            // Nota: En Web Bluetooth, no podemos reconectar automáticamente sin interacción del usuario
+            // pero podemos almacenar el dispositivo en una variable global
             
-            impresoraConectadaGlobal = true;
-            localStorage.setItem('impresoraConectada', 'true');
-            const nombre = localStorage.getItem('impresoraNombre') || 'Impresora';
-            
-            const btn = document.getElementById('btnConectarImpresora');
-            if (btn) {
-                btn.innerHTML = `<i class="fas fa-bluetooth"></i> ${nombre} ✅`;
-                btn.className = 'btn btn-success w-100 mb-2 fw-bold py-2';
+            // Si tenemos el dispositivo guardado en memoria, usarlo
+            if (bluetoothDeviceGlobal) {
+                try {
+                    bluetoothServerGlobal = await bluetoothDeviceGlobal.gatt.connect();
+                    const service = await bluetoothServerGlobal.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+                    bluetoothCharacteristicGlobal = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+                    
+                    impresoraConectadaGlobal = true;
+                    localStorage.setItem('impresoraConectada', 'true');
+                    
+                    const btn = document.getElementById('btnConectarImpresora');
+                    if (btn) {
+                        btn.innerHTML = `<i class="fas fa-bluetooth"></i> ${deviceInfo.name} ✅`;
+                        btn.className = 'btn btn-success w-100 mb-2 fw-bold py-2';
+                    }
+                    
+                    mostrarNotificacion(`✅ Impresora "${deviceInfo.name}" reconectada`, 'success');
+                    return true;
+                } catch (e) {
+                    console.log('⚠️ Error reconectando:', e.message);
+                }
             }
-            
-            mostrarNotificacion('✅ Impresora reconectada', 'success');
-            return true;
         } catch (e) {
-            console.log('⚠️ Error reconectando:', e.message);
-            bluetoothDeviceGlobal = null;
+            console.log('⚠️ Error con dispositivo guardado:', e);
         }
     }
     
@@ -173,6 +183,7 @@ async function conectarImpresora() {
         });
         
         bluetoothDeviceGlobal = device;
+        guardarDispositivoBluetooth(device);
         
         mostrarNotificacion('✅ Conectando...', 'info');
         
@@ -574,6 +585,35 @@ function cargarOrdenParaImprimir(order) {
         console.error('Error cargando orden:', error);
         return false;
     }
+}
+
+// ==================== GUARDAR Y RESTAURAR DISPOSITIVO ====================
+function guardarDispositivoBluetooth(device) {
+    try {
+        // Guardar solo la información necesaria
+        const deviceInfo = {
+            id: device.id,
+            name: device.name || 'Impresora'
+        };
+        localStorage.setItem('bluetoothDeviceInfo', JSON.stringify(deviceInfo));
+        console.log('💾 Dispositivo Bluetooth guardado:', deviceInfo);
+    } catch (e) {
+        console.warn('No se pudo guardar dispositivo:', e);
+    }
+}
+
+function obtenerDispositivoGuardado() {
+    try {
+        const data = localStorage.getItem('bluetoothDeviceInfo');
+        if (data) {
+            const deviceInfo = JSON.parse(data);
+            console.log('📂 Dispositivo guardado encontrado:', deviceInfo);
+            return deviceInfo;
+        }
+    } catch (e) {
+        console.warn('Error leyendo dispositivo guardado:', e);
+    }
+    return null;
 }
 
 // Exponer funciones globales
