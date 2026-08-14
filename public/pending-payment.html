@@ -107,7 +107,7 @@
                                 <hr>
                                 <div class="fw-bold">Total: $${total.toFixed(2)} MXN</div>
                                 <div class="mt-2">
-                                    <button class="btn btn-success btn-sm w-100" onclick="event.stopPropagation(); iniciarCobro(${order.id}, ${total})">💵 COBRAR</button>
+                                    <button class="btn btn-success btn-sm w-100" onclick="iniciarCobro(${order.id}, ${total})">💵 COBRAR</button>
                                 </div>
                             </div>
                         </div>
@@ -314,6 +314,15 @@
                 document.body.appendChild(div);
                 setTimeout(() => div.remove(), 3000);
             }
+
+            // ==================== EXPONER FUNCIONES GLOBALES ====================
+            window.iniciarCobro = iniciarCobro;
+            window.seleccionarOrden = seleccionarOrden;
+            window.confirmarCobro = confirmarCobro;
+            window.cerrarModalCobro = cerrarModalCobro;
+            window.setMetodo = setMetodo;
+            window.calcularCambio = calcularCambio;
+            window.cargarPendientes = cargarPendientes;
 
             // ==================== SOCKET EVENTS ====================
             socket.on('estado-actualizado', () => {
