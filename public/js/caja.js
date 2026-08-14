@@ -603,6 +603,83 @@ function escapeHtml(str) {
     });
 }
 
+// ========== COBROS PENDIENTES (INTEGRADO) ==========
+async function cargarCobrosPendientes() {
+    try {
+        const response = await fetch('/api/orders/pending-payment');
+        const orders = await response.json();
+        renderizarCobrosPendientes(orders);
+    } catch (error) {
+        console.error('Error:', error);
+        document.getElementById('ordenesCobroPendiente').innerHTML = `
+            <div class="col-12 text-center text-danger p-5">
+                ❌ Error al cargar órdenes<br>
+                <button class="btn btn-primary mt-2" onclick="cargarCobrosPendientes()">Reintentar</button>
+            </div>
+        `;
+    }
+}
+
+function renderizarCobrosPendientes(orders) {
+    const container = document.getElementById('ordenesCobroPendiente');
+    if (!orders || orders.length === 0) {
+        container.innerHTML = '<div class="col-12 text-center text-muted p-5">No hay órdenes pendientes de cobro</div>';
+        return;
+    }
+    
+    container.innerHTML = orders.map(order => {
+        let items = [];
+        try { items = JSON.parse(order.items || '[]'); } catch(e) {}
+        items.forEach(item => {
+            item.precio_unitario = item.precio_unitario || (item.subtotal / item.cantidad) || 0;
+        });
+        const total = order.total || 0;
+        return `
+            <div class="col-md-6 col-lg-4">
+                <div class="order-item">
+                    <div class="d-flex justify-content-between">
+                        <strong>${escapeHtml(order.cliente)}</strong>
+                        <span class="badge bg-warning">${order.estado}</span>
+                    </div>
+                    <small class="text-muted">Orden: ${order.order_number}</small>
+                    <hr class="my-2">
+                    <div class="small">
+                        ${items.map(item => `<div>${item.cantidad}x ${escapeHtml(item.nombre)}</div>`).join('')}
+                    </div>
+                    <hr class="my-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <strong>Total: $${total.toFixed(2)}</strong>
+                        <button class="btn btn-sm btn-success" onclick="cargarOrdenYMostrarCobro(${order.id}, '${escapeHtml(order.cliente)}', ${total})">
+                            💰 COBRAR
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Cargar orden al carrito y mostrar sección de cobro
+function cargarOrdenYMostrarCobro(orderId, cliente, total) {
+    // Cargar la orden al carrito
+    cargarOrdenAlCarrito(orderId);
+    // Mostrar sección de ventas
+    mostrarSeccion('ventas');
+    // Establecer cliente y total
+    document.getElementById('cliente').value = cliente;
+    // Actualizar carrito
+    actualizarCarrito();
+    // Mostrar notificación
+    mostrarNotificacion(`📋 Orden de ${cliente} cargada ($${total.toFixed(2)})`, 'success');
+}
+
+// Modificar mostrarSeccion para incluir cobros
+function mostrarSeccion(seccion) {
+    document.getElementById('seccionVentas').style.display = seccion === 'ventas' ? 'block' : 'none';
+    document.getElementById('seccionCobrosPendientes').style.display = seccion === 'cobros' ? 'block' : 'none';
+    if (seccion === 'cobros') cargarCobrosPendientes();
+}
+
 // ========== SOCKET EVENTS ==========
 socket.on('estado-actualizado', () => {
     if (document.getElementById('seccionOrdenes').style.display === 'block') {
