@@ -501,11 +501,10 @@ async function cobrarConTicket() {
     
     localStorage.setItem('ticketData', JSON.stringify(ticketData));
     
-    // Verificar si es una orden pendiente (ordenSeleccionada tiene valor)
+    // Verificar si es una orden pendiente
     if (window.ordenSeleccionada) {
         console.log(`💰 Cobrando orden pendiente ID: ${window.ordenSeleccionada}`);
         
-        // Marcar como pagado en el servidor
         try {
             const metodoPago = document.getElementById('metodoPago')?.value || 'Efectivo';
             let metodoReal = metodoPago;
@@ -529,20 +528,16 @@ async function cobrarConTicket() {
             if (response.ok && data.success) {
                 console.log(`✅ Orden ${window.ordenSeleccionada} marcada como pagada`);
                 
-                // Recargar lista de pendientes si la sección está visible
                 if (typeof window.cargarCobrosPendientes === 'function') {
                     setTimeout(() => window.cargarCobrosPendientes(), 500);
                 }
                 
-                // Notificar por socket
                 if (typeof window.socket !== 'undefined') {
                     window.socket.emit('estado-actualizado', { 
                         orderId: window.ordenSeleccionada, 
                         estado: 'pagado' 
                     });
                 }
-            } else {
-                console.error('Error al marcar orden como pagada:', data.error);
             }
         } catch (error) {
             console.error('Error al cobrar orden pendiente:', error);
@@ -576,25 +571,35 @@ async function cobrarConTicket() {
         await abrirCajaDespuesDeCobro();
     }
     
-    // Limpiar carrito y orden seleccionada
-    window.carrito = [];
-    if (window.ordenSeleccionada) {
-        // Recargar pendientes nuevamente
-        if (typeof window.cargarCobrosPendientes === 'function') {
-            setTimeout(() => window.cargarCobrosPendientes(), 1000);
-        }
-        window.ordenSeleccionada = null;
+    // ✅ LIMPIAR COMPLETAMENTE EL CARRITO Y CAMPOS
+    if (typeof window.limpiarCarrito === 'function') {
+        window.limpiarCarrito();
+        console.log('🧹 Carrito y campos limpiados después de imprimir');
+    } else {
+        // Fallback
+        window.carrito = [];
+        const clienteInput = document.getElementById('cliente');
+        if (clienteInput) clienteInput.value = '';
+        const cartItems = document.getElementById('cartItems');
+        if (cartItems) cartItems.innerHTML = '<p class="text-muted text-center">Carrito vacío</p>';
+        const totalSpan = document.getElementById('cartTotal');
+        if (totalSpan) totalSpan.innerText = '$0.00';
+        
+        // Limpiar campos de efectivo
+        const inputRecibido = document.getElementById('input-recibido');
+        if (inputRecibido) inputRecibido.value = '';
+        const inputRecibidoUsd = document.getElementById('input-recibido-usd');
+        if (inputRecibidoUsd) inputRecibidoUsd.value = '';
+        const labelCambio = document.getElementById('label-cambio');
+        if (labelCambio) labelCambio.innerText = '$0.00';
+        const cambioSpan = document.getElementById('cambio');
+        if (cambioSpan) cambioSpan.innerText = '$0.00';
     }
     
-    // Limpiar UI del carrito
-    const clienteInput = document.getElementById('cliente');
-    if (clienteInput) clienteInput.value = '';
-    const cartItems = document.getElementById('cartItems');
-    if (cartItems) cartItems.innerHTML = '<p class="text-muted text-center">Carrito vacío</p>';
-    const totalSpan = document.getElementById('cartTotal');
-    if (totalSpan) totalSpan.innerText = '$0.00';
+    // ✅ REINICIAR orden seleccionada
+    window.ordenSeleccionada = null;
     
-    console.log('🧹 Carrito limpiado después de imprimir');
+    console.log('🧹 Limpieza completa después de cobrar');
     return impreso;
 }
 

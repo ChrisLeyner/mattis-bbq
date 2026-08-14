@@ -262,11 +262,37 @@ function eliminarDelCarrito(id) {
 }
 
 function limpiarCarrito() {
+    // Limpiar el array del carrito
     carrito = [];
+    window.carrito = carrito;
+    
+    // Limpiar campo de cliente
     const clienteInput = document.getElementById('cliente');
     if (clienteInput) clienteInput.value = '';
+    
+    // Limpiar campos de efectivo/dólares
+    const inputRecibido = document.getElementById('input-recibido');
+    if (inputRecibido) inputRecibido.value = '';
+    
+    const inputRecibidoUsd = document.getElementById('input-recibido-usd');
+    if (inputRecibidoUsd) inputRecibidoUsd.value = '';
+    
+    // Limpiar etiquetas de cambio
+    const labelCambio = document.getElementById('label-cambio');
+    if (labelCambio) labelCambio.innerText = '$0.00';
+    
+    const cambioSpan = document.getElementById('cambio');
+    if (cambioSpan) cambioSpan.innerText = '$0.00';
+    
+    // Actualizar el carrito en la UI
     actualizarCarrito();
-    window.carrito = carrito;
+    
+    // Limpiar el panel de efectivo (reconstruir)
+    const panelCambio = document.getElementById('panelCambio');
+    if (panelCambio) {
+        panelCambio.innerHTML = '';
+        panelCambio.style.display = 'none';
+    }
 }
 
 // ========== AGREGAR PRODUCTO EXTRA ==========
