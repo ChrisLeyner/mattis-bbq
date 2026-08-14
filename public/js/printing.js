@@ -329,8 +329,8 @@ function construirTicket(cliente, metodoPago, total) {
     ticket += `TOTAL: $${total.toFixed(2)}` + LINE_FEED;
     ticket += SEPARATOR + LINE_FEED;
     
-    ticket += '¡Gracias por su visita!' + LINE_FEED;
-    ticket += '¡Vuelva pronto!' + LINE_FEED + LINE_FEED;
+    ticket += 'Gracias por su visita' + LINE_FEED;
+    ticket += 'Vuelva pronto' + LINE_FEED + LINE_FEED;
     ticket += '\x1D\x56\x00';
     
     return ticket;
@@ -392,7 +392,7 @@ function construirTicketCierre(cierre) {
         ticket += `USD: $${(cierre.ventasDolaresUSD || 0).toFixed(2)}` + LINE_FEED;
     }
     ticket += SEP2;
-    ticket += 'Gcias!' + LINE_FEED;
+    ticket += 'Gracias' + LINE_FEED;
     ticket += '\x1D\x56\x00';
     
     return ticket;
