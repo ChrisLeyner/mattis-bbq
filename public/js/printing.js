@@ -331,6 +331,9 @@ function construirTicket(cliente, metodoPago, total) {
     
     ticket += 'Gracias por su visita' + LINE_FEED;
     ticket += 'Vuelva pronto' + LINE_FEED + LINE_FEED;
+    ticket += LINE_FEED;
+    ticket += LINE_FEED;
+    ticket += LINE_FEED;
     ticket += '\x1D\x56\x00';
     
     return ticket;
@@ -393,6 +396,9 @@ function construirTicketCierre(cierre) {
     }
     ticket += SEP2;
     ticket += 'Gracias' + LINE_FEED;
+    ticket += LINE_FEED;
+    ticket += LINE_FEED;
+    ticket += LINE_FEED;
     ticket += '\x1D\x56\x00';
     
     return ticket;
