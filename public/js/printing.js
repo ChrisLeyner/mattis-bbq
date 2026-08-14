@@ -28,6 +28,34 @@ function verificarCompatibilidadBluetooth() {
     }
 }
 
+// ==================== GUARDAR Y RESTAURAR DISPOSITIVO ====================
+function guardarDispositivoBluetooth(device) {
+    try {
+        const deviceInfo = {
+            id: device.id,
+            name: device.name || 'Impresora'
+        };
+        localStorage.setItem('bluetoothDeviceInfo', JSON.stringify(deviceInfo));
+        console.log('💾 Dispositivo Bluetooth guardado:', deviceInfo);
+    } catch (e) {
+        console.warn('No se pudo guardar dispositivo:', e);
+    }
+}
+
+function obtenerDispositivoGuardado() {
+    try {
+        const data = localStorage.getItem('bluetoothDeviceInfo');
+        if (data) {
+            const deviceInfo = JSON.parse(data);
+            console.log('📂 Dispositivo guardado encontrado:', deviceInfo);
+            return deviceInfo;
+        }
+    } catch (e) {
+        console.warn('Error leyendo dispositivo guardado:', e);
+    }
+    return null;
+}
+
 // ==================== ACTIVAR MODO SIMULACIÓN ====================
 function activarModoSimulacion() {
     modoSimulacionGlobal = true;
@@ -59,7 +87,7 @@ function verificarConexionImpresora() {
     return conectada;
 }
 
-// ==================== HEARTBEAT - MANTENER CONEXIÓN ACTIVA ====================
+// ==================== HEARTBEAT ====================
 function iniciarHeartbeat() {
     if (heartbeatInterval) {
         clearInterval(heartbeatInterval);
@@ -68,18 +96,16 @@ function iniciarHeartbeat() {
     heartbeatInterval = setInterval(async () => {
         if (impresoraConectadaGlobal && bluetoothCharacteristicGlobal && bluetoothServerGlobal) {
             try {
-                // Enviar un comando de estado (sin afectar la impresión)
                 await bluetoothCharacteristicGlobal.readValue();
                 console.log('💓 Heartbeat: conexión activa');
             } catch (e) {
-                console.log('⚠️ Heartbeat: conexión perdida, reconectando...');
+                console.log('⚠️ Heartbeat: conexión perdida');
                 impresoraConectadaGlobal = false;
                 bluetoothCharacteristicGlobal = null;
                 bluetoothServerGlobal = null;
-                // No reconectar automáticamente, esperar a que el usuario lo haga
             }
         }
-    }, 10000); // Cada 10 segundos
+    }, 15000);
 }
 
 // ==================== INICIALIZACIÓN ====================
@@ -130,39 +156,29 @@ async function conectarImpresora() {
         }
     }
     
-    // Intentar reconectar a dispositivo guardado SIN mostrar diálogo
-    const deviceInfo = obtenerDispositivoGuardado();
-    if (deviceInfo) {
+    // Intentar reconectar a dispositivo guardado
+    if (bluetoothDeviceGlobal) {
         try {
-            console.log('🔄 Intentando reconectar a dispositivo guardado:', deviceInfo.name);
-            // Encontrar el dispositivo por ID (si está disponible)
-            // Nota: En Web Bluetooth, no podemos reconectar automáticamente sin interacción del usuario
-            // pero podemos almacenar el dispositivo en una variable global
+            console.log('🔄 Intentando reconectar a dispositivo guardado...');
+            bluetoothServerGlobal = await bluetoothDeviceGlobal.gatt.connect();
+            const service = await bluetoothServerGlobal.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+            bluetoothCharacteristicGlobal = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
             
-            // Si tenemos el dispositivo guardado en memoria, usarlo
-            if (bluetoothDeviceGlobal) {
-                try {
-                    bluetoothServerGlobal = await bluetoothDeviceGlobal.gatt.connect();
-                    const service = await bluetoothServerGlobal.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
-                    bluetoothCharacteristicGlobal = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
-                    
-                    impresoraConectadaGlobal = true;
-                    localStorage.setItem('impresoraConectada', 'true');
-                    
-                    const btn = document.getElementById('btnConectarImpresora');
-                    if (btn) {
-                        btn.innerHTML = `<i class="fas fa-bluetooth"></i> ${deviceInfo.name} ✅`;
-                        btn.className = 'btn btn-success w-100 mb-2 fw-bold py-2';
-                    }
-                    
-                    mostrarNotificacion(`✅ Impresora "${deviceInfo.name}" reconectada`, 'success');
-                    return true;
-                } catch (e) {
-                    console.log('⚠️ Error reconectando:', e.message);
-                }
+            impresoraConectadaGlobal = true;
+            localStorage.setItem('impresoraConectada', 'true');
+            const nombre = localStorage.getItem('impresoraNombre') || 'Impresora';
+            
+            const btn = document.getElementById('btnConectarImpresora');
+            if (btn) {
+                btn.innerHTML = `<i class="fas fa-bluetooth"></i> ${nombre} ✅`;
+                btn.className = 'btn btn-success w-100 mb-2 fw-bold py-2';
             }
+            
+            mostrarNotificacion('✅ Impresora reconectada', 'success');
+            return true;
         } catch (e) {
-            console.log('⚠️ Error con dispositivo guardado:', e);
+            console.log('⚠️ Error reconectando:', e.message);
+            bluetoothDeviceGlobal = null;
         }
     }
     
@@ -226,7 +242,7 @@ async function conectarImpresora() {
     }
 }
 
-// ==================== ENVIAR DATOS A IMPRESORA (CON CHUNKING) ====================
+// ==================== ENVIAR DATOS A IMPRESORA ====================
 async function enviarAImpresora(ticket) {
     if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
         console.log('📄 TICKET (SIMULACIÓN):');
@@ -258,18 +274,17 @@ async function enviarAImpresora(ticket) {
         }
     }
     
-    // Enviar datos en chunks (512 bytes máximos)
+    // Enviar datos en chunks
     try {
         const encoder = new TextEncoder();
         const data = encoder.encode(ticket);
-        const chunkSize = 480; // Un poco menos de 512 para margen
+        const chunkSize = 480;
         let offset = 0;
         
         while (offset < data.length) {
             const chunk = data.slice(offset, offset + chunkSize);
             await bluetoothCharacteristicGlobal.writeValue(chunk);
             offset += chunkSize;
-            // Pequeña pausa entre chunks
             if (offset < data.length) {
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
@@ -316,7 +331,7 @@ function construirTicket(cliente, metodoPago, total) {
     
     ticket += '¡Gracias por su visita!' + LINE_FEED;
     ticket += '¡Vuelva pronto!' + LINE_FEED + LINE_FEED;
-    ticket += '\x1D\x56\x00'; // Cortar papel
+    ticket += '\x1D\x56\x00';
     
     return ticket;
 }
@@ -346,46 +361,39 @@ async function imprimirTicketAutomatico() {
     }
 }
 
-// ==================== TICKET DE CIERRE (VERSIÓN CORTA) ====================
+// ==================== TICKET DE CIERRE ====================
 function construirTicketCierre(cierre) {
     const fecha = new Date().toLocaleString();
     let ticket = '';
     
     const LINE_FEED = '\x0A';
-    const SEPARATOR = '--------------------' + LINE_FEED;
-    const DOUBLE_SEPARATOR = '====================' + LINE_FEED;
+    const SEP = '----------------' + LINE_FEED;
+    const SEP2 = '================' + LINE_FEED;
     
-    // Encabezado (más compacto)
-    ticket += 'MATTI\'S B-B-Q' + LINE_FEED;
-    ticket += 'CIERRE DE TURNO' + LINE_FEED;
-    ticket += SEPARATOR;
-    ticket += `Fecha: ${fecha}` + LINE_FEED;
+    ticket += 'MATTI\'S BBQ' + LINE_FEED;
+    ticket += '=== CIERRE ===' + LINE_FEED;
+    ticket += `F: ${fecha}` + LINE_FEED;
     if (cierre.fechaApertura) {
-        ticket += `Apertura: ${new Date(cierre.fechaApertura).toLocaleString().slice(0, 16)}` + LINE_FEED;
+        ticket += `Ape: ${new Date(cierre.fechaApertura).toLocaleString().slice(0, 14)}` + LINE_FEED;
     }
-    ticket += SEPARATOR + LINE_FEED;
-    
-    // Resumen de ventas (abreviado)
-    ticket += `Fondo: $${(cierre.fondoInicial || 0).toFixed(2)} MXN` + LINE_FEED;
-    ticket += `Efectivo: $${(cierre.ventasEfectivo || 0).toFixed(2)} MXN` + LINE_FEED;
-    ticket += `Tarjeta: $${(cierre.ventasTarjeta || 0).toFixed(2)} MXN` + LINE_FEED;
-    ticket += `Transf.: $${(cierre.ventasTransferencia || 0).toFixed(2)} MXN` + LINE_FEED;
+    ticket += SEP;
+    ticket += `Fdo: $${(cierre.fondoInicial || 0).toFixed(2)}` + LINE_FEED;
+    ticket += `Efe: $${(cierre.ventasEfectivo || 0).toFixed(2)}` + LINE_FEED;
+    ticket += `Tar: $${(cierre.ventasTarjeta || 0).toFixed(2)}` + LINE_FEED;
+    ticket += `Tra: $${(cierre.ventasTransferencia || 0).toFixed(2)}` + LINE_FEED;
     if (cierre.ventasDolaresUSD > 0) {
-        ticket += `Dólares: $${(cierre.ventasDolaresUSD || 0).toFixed(2)} USD` + LINE_FEED;
+        ticket += `USD: $${(cierre.ventasDolaresUSD || 0).toFixed(2)}` + LINE_FEED;
     }
-    ticket += SEPARATOR + LINE_FEED;
-    
-    // Totales
-    ticket += `TOTAL: $${(cierre.totalVendidoMXN || 0).toFixed(2)} MXN` + LINE_FEED;
-    ticket += DOUBLE_SEPARATOR;
-    ticket += `CAJA MXN: $${(cierre.efectivoEnCajaMXN || 0).toFixed(2)}` + LINE_FEED;
+    ticket += SEP;
+    ticket += `TOTAL: $${(cierre.totalVendidoMXN || 0).toFixed(2)}` + LINE_FEED;
+    ticket += SEP2;
+    ticket += `CAJA: $${(cierre.efectivoEnCajaMXN || 0).toFixed(2)}` + LINE_FEED;
     if (cierre.ventasDolaresUSD > 0) {
-        ticket += `CAJA USD: $${(cierre.ventasDolaresUSD || 0).toFixed(2)}` + LINE_FEED;
+        ticket += `USD: $${(cierre.ventasDolaresUSD || 0).toFixed(2)}` + LINE_FEED;
     }
-    ticket += DOUBLE_SEPARATOR + LINE_FEED;
-    
-    ticket += '¡Gracias!' + LINE_FEED;
-    ticket += '\x1D\x56\x00'; // Cortar papel
+    ticket += SEP2;
+    ticket += 'Gcias!' + LINE_FEED;
+    ticket += '\x1D\x56\x00';
     
     return ticket;
 }
@@ -397,16 +405,6 @@ async function imprimirTicketCierre(cierre) {
         console.error('❌ No hay datos de cierre');
         mostrarNotificacion('❌ No hay datos de cierre para imprimir', 'danger');
         return false;
-    }
-    
-    // Verificar conexión primero
-    if (!impresoraConectadaGlobal || !bluetoothCharacteristicGlobal || !bluetoothServerGlobal) {
-        console.log('🔄 Impresora no conectada, intentando conectar...');
-        const conectado = await conectarImpresora();
-        if (!conectado) {
-            mostrarNotificacion('⚠️ Conecta la impresora para imprimir el cierre', 'warning');
-            return false;
-        }
     }
     
     if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
@@ -427,6 +425,64 @@ async function imprimirTicketCierre(cierre) {
     } catch (error) {
         console.error('Error imprimiendo cierre:', error);
         mostrarNotificacion('❌ Error al imprimir cierre: ' + error.message, 'danger');
+        return false;
+    }
+}
+
+// ==================== FUNCIONES PARA PENDING-PAYMENT ====================
+function verificarEstadoImpresora() {
+    return {
+        conectada: impresoraConectadaGlobal || modoSimulacionGlobal,
+        modoSimulacion: modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true',
+        nombre: localStorage.getItem('impresoraNombre') || 'Impresora'
+    };
+}
+
+function cargarOrdenParaImprimir(order) {
+    if (!order) return false;
+    
+    try {
+        window.carrito = [];
+        let items = [];
+        try { items = JSON.parse(order.items || '[]'); } catch(e) {}
+        items.forEach(item => {
+            window.carrito.push({
+                id: item.product_id || Date.now(),
+                nombre: item.nombre,
+                precio: item.precio_unitario || item.precio || 0,
+                cantidad: item.cantidad
+            });
+        });
+        if (order.cliente) {
+            const clienteInput = document.getElementById('cliente');
+            if (clienteInput) clienteInput.value = order.cliente;
+        }
+        return true;
+    } catch (error) {
+        console.error('Error cargando orden:', error);
+        return false;
+    }
+}
+
+// ==================== ABRIR CAJA ====================
+async function abrirCajaDespuesDeCobro() {
+    console.log('🔓 Intentando abrir caja registradora...');
+    try {
+        const response = await fetch('/api/cash/drawer/open', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const result = await response.json();
+        if (result.success) {
+            console.log('💰 Caja abierta exitosamente');
+            mostrarNotificacion('💰 Caja registradora abierta', 'success');
+            return true;
+        } else {
+            console.log('⚠️ No se pudo abrir caja:', result.message);
+            return false;
+        }
+    } catch (error) {
+        console.error('❌ Error abriendo caja:', error);
         return false;
     }
 }
@@ -486,29 +542,6 @@ async function cobrarConTicket() {
     return impreso;
 }
 
-// ==================== ABRIR CAJA ====================
-async function abrirCajaDespuesDeCobro() {
-    console.log('🔓 Intentando abrir caja registradora...');
-    try {
-        const response = await fetch('/api/cash/drawer/open', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        const result = await response.json();
-        if (result.success) {
-            console.log('💰 Caja abierta exitosamente');
-            mostrarNotificacion('💰 Caja registradora abierta', 'success');
-            return true;
-        } else {
-            console.log('⚠️ No se pudo abrir caja:', result.message);
-            return false;
-        }
-    } catch (error) {
-        console.error('❌ Error abriendo caja:', error);
-        return false;
-    }
-}
-
 // ==================== NOTIFICACIONES ====================
 function mostrarNotificacion(mensaje, tipo) {
     const div = document.createElement('div');
@@ -520,109 +553,6 @@ function mostrarNotificacion(mensaje, tipo) {
     setTimeout(() => div.remove(), 4000);
 }
 
-// ==================== CARGAR ORDEN PARA IMPRIMIR ====================
-async function cargarOrdenParaImprimir(order) {
-    if (!order) return false;
-    
-    try {
-        window.carrito = [];
-        let items = [];
-        try { items = JSON.parse(order.items || '[]'); } catch(e) {}
-        items.forEach(item => {
-            window.carrito.push({
-                id: item.product_id || Date.now(),
-                nombre: item.nombre,
-                precio: item.precio_unitario || item.precio || 0,
-                cantidad: item.cantidad
-            });
-        });
-        if (order.cliente) {
-            const clienteInput = document.getElementById('cliente');
-            if (clienteInput) clienteInput.value = order.cliente;
-        }
-        return true;
-    } catch (error) {
-        console.error('Error cargando orden:', error);
-        return false;
-    }
-}
-
-// ==================== FUNCIONES PARA PENDING-PAYMENT ====================
-// Verificar si la impresora está conectada (desde caja)
-function verificarEstadoImpresora() {
-    return {
-        conectada: impresoraConectadaGlobal || modoSimulacionGlobal,
-        modoSimulacion: modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true',
-        nombre: localStorage.getItem('impresoraNombre') || 'Impresora'
-    };
-}
-
-// Cargar orden al carrito para imprimir (desde pending-payment)
-function cargarOrdenParaImprimir(order) {
-    if (!order) return false;
-    
-    try {
-        // Crear carrito temporal
-        window.carrito = [];
-        let items = [];
-        try { items = JSON.parse(order.items || '[]'); } catch(e) {}
-        items.forEach(item => {
-            window.carrito.push({
-                id: item.product_id || Date.now(),
-                nombre: item.nombre,
-                precio: item.precio_unitario || item.precio || 0,
-                cantidad: item.cantidad
-            });
-        });
-        
-        // Guardar cliente para el ticket
-        if (order.cliente) {
-            const clienteInput = document.getElementById('cliente');
-            if (clienteInput) clienteInput.value = order.cliente;
-        }
-        return true;
-    } catch (error) {
-        console.error('Error cargando orden:', error);
-        return false;
-    }
-}
-
-// ==================== GUARDAR Y RESTAURAR DISPOSITIVO ====================
-function guardarDispositivoBluetooth(device) {
-    try {
-        // Guardar solo la información necesaria
-        const deviceInfo = {
-            id: device.id,
-            name: device.name || 'Impresora'
-        };
-        localStorage.setItem('bluetoothDeviceInfo', JSON.stringify(deviceInfo));
-        console.log('💾 Dispositivo Bluetooth guardado:', deviceInfo);
-    } catch (e) {
-        console.warn('No se pudo guardar dispositivo:', e);
-    }
-}
-
-function obtenerDispositivoGuardado() {
-    try {
-        const data = localStorage.getItem('bluetoothDeviceInfo');
-        if (data) {
-            const deviceInfo = JSON.parse(data);
-            console.log('📂 Dispositivo guardado encontrado:', deviceInfo);
-            return deviceInfo;
-        }
-    } catch (e) {
-        console.warn('Error leyendo dispositivo guardado:', e);
-    }
-    return null;
-}
-
-// Exponer funciones globales
-window.verificarEstadoImpresora = verificarEstadoImpresora;
-window.cargarOrdenParaImprimir = cargarOrdenParaImprimir;
-
-// Exponer función global
-window.cargarOrdenParaImprimir = cargarOrdenParaImprimir;
-
 // ==================== EXPONER FUNCIONES GLOBALES ====================
 window.conectarImpresora = conectarImpresora;
 window.imprimirTicketAutomatico = imprimirTicketAutomatico;
@@ -631,5 +561,7 @@ window.abrirCajaDespuesDeCobro = abrirCajaDespuesDeCobro;
 window.cobrarConTicket = cobrarConTicket;
 window.activarModoSimulacion = activarModoSimulacion;
 window.verificarConexionImpresora = verificarConexionImpresora;
+window.verificarEstadoImpresora = verificarEstadoImpresora;
+window.cargarOrdenParaImprimir = cargarOrdenParaImprimir;
 
 console.log('✅ Módulo de impresión cargado correctamente');
