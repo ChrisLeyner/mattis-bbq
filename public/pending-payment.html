@@ -224,6 +224,37 @@
                 }
 
                 try {
+                    // 1. OBTENER LA ORDEN ANTES DE MARCAR COMO PAGADA
+                    const orderResponse = await fetch(`/api/orders/${ordenSeleccionada}`);
+                    if (!orderResponse.ok) {
+                        throw new Error('Error al obtener la orden');
+                    }
+                    const order = await orderResponse.json();
+                    console.log('📋 Orden obtenida:', order);
+                    
+                    // 2. GUARDAR DATOS DE LA ORDEN LOCALMENTE PARA IMPRIMIR
+                    let items = [];
+                    try { items = JSON.parse(order.items || '[]'); } catch(e) {}
+                    
+                    // Crear carrito temporal con los items de la orden
+                    window.carrito = [];
+                    items.forEach(item => {
+                        window.carrito.push({
+                            id: item.product_id || Date.now(),
+                            nombre: item.nombre,
+                            precio: item.precio_unitario || item.precio || 0,
+                            cantidad: item.cantidad
+                        });
+                    });
+                    
+                    // Guardar cliente para el ticket
+                    if (order.cliente) {
+                        const clienteInput = document.getElementById('cliente');
+                        if (clienteInput) clienteInput.value = order.cliente;
+                    }
+                    console.log('🛒 Carrito preparado para imprimir:', window.carrito);
+                    
+                    // 3. Marcar como pagado en el servidor
                     const response = await fetch(`/api/orders/${ordenSeleccionada}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
@@ -240,51 +271,50 @@
                         cerrarModalCobro();
                         cargarPendientes();
                         
-                        // Cargar orden e imprimir
-                        try {
-                            const orderResponse = await fetch(`/api/orders/${ordenSeleccionada}`);
-                            const order = await orderResponse.json();
-                            if (order && typeof window.cargarOrdenParaImprimir === 'function') {
-                                window.cargarOrdenParaImprimir(order);
-                            }
-                        } catch (e) {
-                            console.warn('⚠️ Error cargando orden:', e);
-                        }
-                        
-                        // Verificar estado de impresora
+                        // 4. Verificar estado de impresora
                         let impresoraLista = false;
                         if (typeof window.verificarEstadoImpresora === 'function') {
                             const estado = window.verificarEstadoImpresora();
                             impresoraLista = estado.conectada;
+                            console.log('📊 Estado impresora:', estado);
                         }
                         
-                        // Imprimir
+                        // 5. Imprimir ticket
                         if (impresoraLista || window.modoSimulacionGlobal) {
-                            try {
-                                if (typeof window.imprimirTicketAutomatico === 'function') {
-                                    console.log('🖨️ Imprimiendo ticket desde pending-payment...');
-                                    await window.imprimirTicketAutomatico();
-                                    if (typeof window.abrirCajaDespuesDeCobro === 'function') {
-                                        await window.abrirCajaDespuesDeCobro();
+                            if (window.carrito.length > 0) {
+                                try {
+                                    if (typeof window.imprimirTicketAutomatico === 'function') {
+                                        console.log('🖨️ Imprimiendo ticket desde pending-payment...');
+                                        const impreso = await window.imprimirTicketAutomatico();
+                                        if (impreso && typeof window.abrirCajaDespuesDeCobro === 'function') {
+                                            await window.abrirCajaDespuesDeCobro();
+                                        }
                                     }
+                                } catch (e) {
+                                    console.warn('⚠️ Error imprimiendo:', e);
+                                    mostrarNotificacion('⚠️ Error al imprimir: ' + e.message, 'warning');
                                 }
-                            } catch (e) {
-                                console.warn('⚠️ Error imprimiendo:', e);
+                            } else {
+                                console.warn('⚠️ No hay productos para imprimir');
+                                mostrarNotificacion('⚠️ No hay productos en la orden', 'warning');
                             }
                         } else {
                             console.warn('⚠️ Impresora no conectada');
                             mostrarNotificacion('⚠️ Impresora no conectada. Conéctala desde la caja.', 'warning');
                         }
                         
+                        // 6. Limpiar carrito temporal
                         window.carrito = [];
+                        
+                        // 7. Notificar por socket
                         socket.emit('estado-actualizado', { orderId: ordenSeleccionada, estado: 'pagado' });
                         
                     } else {
-                        alert('❌ Error: ' + (data.error || 'desconocido'));
+                        alert('❌ Error al cobrar: ' + (data.error || 'desconocido'));
                     }
                 } catch (error) {
                     console.error('Error en cobro:', error);
-                    alert('❌ Error de conexión');
+                    mostrarNotificacion('❌ Error en cobro: ' + error.message, 'danger');
                 }
             }
 
