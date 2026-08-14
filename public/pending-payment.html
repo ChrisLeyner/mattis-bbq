@@ -20,7 +20,6 @@
         <div class="container-fluid">
             <a class="navbar-brand" href="/">💰 COBROS PENDIENTES - MATTI'S BBQ</a>
             <div>
-                <!-- Botón de impresora eliminado - solo se conecta desde caja -->
                 <button class="btn btn-outline-light btn-sm" onclick="location.href='/'">⬅ Volver</button>
             </div>
         </div>
@@ -241,50 +240,40 @@
                         cerrarModalCobro();
                         cargarPendientes();
                         
-                        // Cargar orden e imprimir usando funciones de printing.js
+                        // Cargar orden e imprimir
                         try {
                             const orderResponse = await fetch(`/api/orders/${ordenSeleccionada}`);
                             const order = await orderResponse.json();
-                            if (order) {
-                                if (typeof window.cargarOrdenParaImprimir === 'function') {
-                                    await window.cargarOrdenParaImprimir(order);
-                                } else {
-                                    // Fallback manual
-                                    window.carrito = [];
-                                    let items = [];
-                                    try { items = JSON.parse(order.items || '[]'); } catch(e) {}
-                                    items.forEach(item => {
-                                        window.carrito.push({
-                                            id: item.product_id || Date.now(),
-                                            nombre: item.nombre,
-                                            precio: item.precio_unitario || item.precio || 0,
-                                            cantidad: item.cantidad
-                                        });
-                                    });
-                                    if (order.cliente) {
-                                        const clienteInput = document.getElementById('cliente');
-                                        if (clienteInput) clienteInput.value = order.cliente;
-                                    }
-                                }
+                            if (order && typeof window.cargarOrdenParaImprimir === 'function') {
+                                window.cargarOrdenParaImprimir(order);
                             }
                         } catch (e) {
-                            console.warn('⚠️ Error cargando orden para imprimir:', e);
+                            console.warn('⚠️ Error cargando orden:', e);
                         }
                         
-                        // Imprimir usando funciones de printing.js
-                        try {
-                            if (typeof window.imprimirTicketAutomatico === 'function') {
-                                if (window.impresoraConectadaGlobal || window.modoSimulacionGlobal) {
-                                    const impreso = await window.imprimirTicketAutomatico();
-                                    if (impreso) {
+                        // Verificar estado de impresora
+                        let impresoraLista = false;
+                        if (typeof window.verificarEstadoImpresora === 'function') {
+                            const estado = window.verificarEstadoImpresora();
+                            impresoraLista = estado.conectada;
+                        }
+                        
+                        // Imprimir
+                        if (impresoraLista || window.modoSimulacionGlobal) {
+                            try {
+                                if (typeof window.imprimirTicketAutomatico === 'function') {
+                                    console.log('🖨️ Imprimiendo ticket desde pending-payment...');
+                                    await window.imprimirTicketAutomatico();
+                                    if (typeof window.abrirCajaDespuesDeCobro === 'function') {
                                         await window.abrirCajaDespuesDeCobro();
                                     }
-                                } else {
-                                    mostrarNotificacion('⚠️ Impresora no conectada. Conéctala desde la caja.', 'warning');
                                 }
+                            } catch (e) {
+                                console.warn('⚠️ Error imprimiendo:', e);
                             }
-                        } catch (e) {
-                            console.warn('⚠️ Error imprimiendo:', e);
+                        } else {
+                            console.warn('⚠️ Impresora no conectada');
+                            mostrarNotificacion('⚠️ Impresora no conectada. Conéctala desde la caja.', 'warning');
                         }
                         
                         window.carrito = [];
