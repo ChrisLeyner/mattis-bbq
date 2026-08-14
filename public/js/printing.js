@@ -332,7 +332,7 @@ function construirTicket(cliente, metodoPago, total) {
     ticket += 'Gracias por su visita' + LINE_FEED;
     ticket += 'Vuelva pronto' + LINE_FEED + LINE_FEED;
     ticket += '\x1B\x64\x03'; // Avanzar 3 líneas
-    ticket += '\x1B\x70\x00\x19\xFA';  // Abrir cajón
+   ticket += '\x1B\x70\x00\x32\xFA';  // Abrir cajón
     ticket += '\x1D\x56\x00';
     
     return ticket;
@@ -396,7 +396,7 @@ function construirTicketCierre(cierre) {
     ticket += SEP2;
     ticket += 'Gracias' + LINE_FEED;
     ticket += '\x1B\x64\x03'; // Avanzar 3 líneas
-    ticket += '\x1B\x70\x00\x19\xFA';  // Abrir cajón
+    ticket += '\x1B\x70\x00\x32\xFA';  // Abrir cajón
     ticket += '\x1D\x56\x00';
     
     return ticket;
