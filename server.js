@@ -542,38 +542,42 @@ app.get('/api/cash/drawer/status', (req, res) => {
 
 // Dashboard
 app.get('/api/admin/dashboard', (req, res) => {
-    try {
-        // ✅ Incluir TODOS los estados de venta (pagado, entregado, completado)
-        const totalVentas = db.prepare("SELECT COUNT(*) as count FROM orders WHERE estado IN ('pagado', 'entregado', 'completado')").get();
-        const totalMonto = db.prepare("SELECT SUM(total) as total FROM orders WHERE estado IN ('pagado', 'entregado', 'completado')").get();
-        const totalProductos = db.prepare("SELECT COUNT(*) as count FROM products WHERE activo = 1").get();
-        const totalPedidos = db.prepare("SELECT COUNT(*) as count FROM orders").get();
+    // Contar ventas pagadas
+    db.get("SELECT COUNT(*) as count FROM orders WHERE estado IN ('pagado', 'entregado', 'completado')", (err, totalVentas) => {
+        if (err) return res.status(500).json({ error: err.message });
         
-        // ✅ Obtener ventas agrupadas por método de pago
-        const ventasPorMetodo = db.prepare("SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders WHERE estado IN ('pagado', 'entregado', 'completado') GROUP BY metodo_pago").all();
-        
-        // ✅ Asegurar que ventasPorMetodo sea un array
-        const ventasArray = Array.isArray(ventasPorMetodo) ? ventasPorMetodo : [];
-        
-        console.log('📊 Dashboard:', {
-            totalVentas: totalVentas?.count || 0,
-            totalMonto: totalMonto?.total || 0,
-            totalProductos: totalProductos?.count || 0,
-            totalPedidos: totalPedidos?.count || 0,
-            ventasPorMetodo: ventasArray
+        db.get("SELECT SUM(total) as total FROM orders WHERE estado IN ('pagado', 'entregado', 'completado')", (err, totalMonto) => {
+            if (err) return res.status(500).json({ error: err.message });
+            
+            db.get("SELECT COUNT(*) as count FROM products WHERE activo = 1", (err, totalProductos) => {
+                if (err) return res.status(500).json({ error: err.message });
+                
+                db.get("SELECT COUNT(*) as count FROM orders", (err, totalPedidos) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    
+                    db.all("SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders WHERE estado IN ('pagado', 'entregado', 'completado') GROUP BY metodo_pago", (err, ventasPorMetodo) => {
+                        if (err) return res.status(500).json({ error: err.message });
+                        
+                        console.log('📊 Dashboard:', {
+                            totalVentas: totalVentas?.count || 0,
+                            totalMonto: totalMonto?.total || 0,
+                            totalProductos: totalProductos?.count || 0,
+                            totalPedidos: totalPedidos?.count || 0,
+                            ventasPorMetodo: ventasPorMetodo || []
+                        });
+                        
+                        res.json({
+                            totalVentas: totalVentas?.count || 0,
+                            totalMonto: totalMonto?.total || 0,
+                            totalProductos: totalProductos?.count || 0,
+                            totalPedidos: totalPedidos?.count || 0,
+                            ventasPorMetodo: ventasPorMetodo || []
+                        });
+                    });
+                });
+            });
         });
-        
-        res.json({
-            totalVentas: totalVentas?.count || 0,
-            totalMonto: totalMonto?.total || 0,
-            totalProductos: totalProductos?.count || 0,
-            totalPedidos: totalPedidos?.count || 0,
-            ventasPorMetodo: ventasArray
-        });
-    } catch (err) {
-        console.error('Error en dashboard:', err);
-        res.status(500).json({ error: err.message });
-    }
+    });
 });
 
 // Ventas por período
@@ -599,43 +603,47 @@ app.get('/api/admin/sales/:periodo', (req, res) => {
             return res.status(400).json({ error: 'Período no válido' });
     }
     
-    try {
-        const totalVentas = db.prepare(`SELECT COUNT(*) as count FROM orders ${where}`).get();
-        const totalMonto = db.prepare(`SELECT SUM(total) as total FROM orders ${where}`).get();
-        const porMetodo = db.prepare(`SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders ${where} GROUP BY metodo_pago`).all();
-        const ultimasVentas = db.prepare(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT 20`).all();
+    // Total ventas
+    db.get(`SELECT COUNT(*) as count FROM orders ${where}`, (err, totalVentas) => {
+        if (err) return res.status(500).json({ error: err.message });
         
-        // ✅ Asegurar que sean arrays
-        const porMetodoArray = Array.isArray(porMetodo) ? porMetodo : [];
-        const ultimasVentasArray = Array.isArray(ultimasVentas) ? ultimasVentas : [];
-        
-        console.log(`📊 Ventas ${periodoText}:`, {
-            totalVentas: totalVentas?.count || 0,
-            totalMonto: totalMonto?.total || 0,
-            porMetodo: porMetodoArray,
-            ultimasVentas: ultimasVentasArray
+        db.get(`SELECT SUM(total) as total FROM orders ${where}`, (err, totalMonto) => {
+            if (err) return res.status(500).json({ error: err.message });
+            
+            db.all(`SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders ${where} GROUP BY metodo_pago`, (err, porMetodo) => {
+                if (err) return res.status(500).json({ error: err.message });
+                
+                db.all(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT 20`, (err, ultimasVentas) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    
+                    const porMetodoArray = Array.isArray(porMetodo) ? porMetodo : [];
+                    const ultimasVentasArray = Array.isArray(ultimasVentas) ? ultimasVentas : [];
+                    
+                    console.log(`📊 Ventas ${periodoText}:`, {
+                        totalVentas: totalVentas?.count || 0,
+                        totalMonto: totalMonto?.total || 0,
+                        porMetodo: porMetodoArray,
+                        ultimasVentas: ultimasVentasArray
+                    });
+                    
+                    res.json({
+                        periodo: periodoText,
+                        totalVentas: totalVentas?.count || 0,
+                        totalMonto: totalMonto?.total || 0,
+                        porMetodo: porMetodoArray,
+                        ultimasVentas: ultimasVentasArray
+                    });
+                });
+            });
         });
-        
-        res.json({
-            periodo: periodoText,
-            totalVentas: totalVentas?.count || 0,
-            totalMonto: totalMonto?.total || 0,
-            porMetodo: porMetodoArray,
-            ultimasVentas: ultimasVentasArray
-        });
-    } catch (err) {
-        console.error('Error en ventas:', err);
-        res.status(500).json({ error: err.message });
-    }
+    });
 });
 
 // Eliminar producto (soft delete)
 app.delete('/api/products/:id', (req, res) => {
     const { id } = req.params;
-    try {
-        db.prepare("UPDATE products SET activo = 0 WHERE id = ?").run(id);
+    db.run("UPDATE products SET activo = 0 WHERE id = ?", [id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
         res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    });
 });
