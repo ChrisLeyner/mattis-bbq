@@ -540,25 +540,25 @@ app.get('/api/cash/drawer/status', (req, res) => {
 
 // ==================== ADMINISTRACIÓN ====================
 
-// Dashboard
+// Dashboard - Muestra TODAS las ventas pagadas
 app.get('/api/admin/dashboard', (req, res) => {
-    // Contar ventas pagadas
-    db.get("SELECT COUNT(*) as count FROM orders WHERE estado IN ('pagado', 'entregado', 'completado')", (err, totalVentas) => {
+    // Total de ventas pagadas (todas)
+    db.get("SELECT COUNT(*) as count FROM orders WHERE estado = 'pagado'", (err, totalVentas) => {
         if (err) return res.status(500).json({ error: err.message });
         
-        db.get("SELECT SUM(total) as total FROM orders WHERE estado IN ('pagado', 'entregado', 'completado')", (err, totalMonto) => {
+        db.get("SELECT SUM(total) as total FROM orders WHERE estado = 'pagado'", (err, totalMonto) => {
             if (err) return res.status(500).json({ error: err.message });
             
             db.get("SELECT COUNT(*) as count FROM products WHERE activo = 1", (err, totalProductos) => {
                 if (err) return res.status(500).json({ error: err.message });
                 
-                db.get("SELECT COUNT(*) as count FROM orders", (err, totalPedidos) => {
+                db.get("SELECT COUNT(*) as count FROM orders WHERE estado = 'pagado'", (err, totalPedidos) => {
                     if (err) return res.status(500).json({ error: err.message });
                     
-                    db.all("SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders WHERE estado IN ('pagado', 'entregado', 'completado') GROUP BY metodo_pago", (err, ventasPorMetodo) => {
+                    db.all("SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders WHERE estado = 'pagado' GROUP BY metodo_pago", (err, ventasPorMetodo) => {
                         if (err) return res.status(500).json({ error: err.message });
                         
-                        console.log('📊 Dashboard:', {
+                        console.log('📊 Dashboard (Todas las ventas):', {
                             totalVentas: totalVentas?.count || 0,
                             totalMonto: totalMonto?.total || 0,
                             totalProductos: totalProductos?.count || 0,
@@ -580,30 +580,31 @@ app.get('/api/admin/dashboard', (req, res) => {
     });
 });
 
-// Ventas por período
+// Ventas por período (día, semana, mes)
 app.get('/api/admin/sales/:periodo', (req, res) => {
     const { periodo } = req.params;
     let where = '';
     let periodoText = '';
     
+    // Filtro por fecha según el período seleccionado
     switch(periodo) {
         case 'dia':
-            where = "WHERE date(created_at) = date('now', 'localtime') AND estado IN ('pagado', 'entregado', 'completado')";
+            where = "WHERE date(created_at) = date('now', 'localtime') AND estado = 'pagado'";
             periodoText = 'Hoy';
             break;
         case 'semana':
-            where = "WHERE date(created_at) >= date('now', 'localtime', '-7 days') AND estado IN ('pagado', 'entregado', 'completado')";
+            where = "WHERE date(created_at) >= date('now', 'localtime', '-7 days') AND estado = 'pagado'";
             periodoText = 'Última semana';
             break;
         case 'mes':
-            where = "WHERE date(created_at) >= date('now', 'localtime', '-30 days') AND estado IN ('pagado', 'entregado', 'completado')";
+            where = "WHERE date(created_at) >= date('now', 'localtime', '-30 days') AND estado = 'pagado'";
             periodoText = 'Último mes';
             break;
         default:
             return res.status(400).json({ error: 'Período no válido' });
     }
     
-    // Total ventas
+    // Total ventas del período
     db.get(`SELECT COUNT(*) as count FROM orders ${where}`, (err, totalVentas) => {
         if (err) return res.status(500).json({ error: err.message });
         
@@ -613,7 +614,7 @@ app.get('/api/admin/sales/:periodo', (req, res) => {
             db.all(`SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders ${where} GROUP BY metodo_pago`, (err, porMetodo) => {
                 if (err) return res.status(500).json({ error: err.message });
                 
-                db.all(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT 20`, (err, ultimasVentas) => {
+                db.all(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT 50`, (err, ultimasVentas) => {
                     if (err) return res.status(500).json({ error: err.message });
                     
                     const porMetodoArray = Array.isArray(porMetodo) ? porMetodo : [];
