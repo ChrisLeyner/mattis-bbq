@@ -133,12 +133,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
     
-    if (isLocalhost()) {
-        console.log('⚠️ Entorno localhost detectado - Activando modo simulación automático');
-        activarModoSimulacion();
-        return;
-    }
-    
     const compatible = verificarCompatibilidadBluetooth();
     if (!compatible.disponible) {
         console.log('⚠️ Bluetooth no disponible:', compatible.razon);
