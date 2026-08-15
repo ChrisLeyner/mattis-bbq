@@ -7,6 +7,11 @@ var modoSimulacionGlobal = false;
 var heartbeatInterval = null;
 var reconectando = false;
 
+// ==================== VARIABLES USB ====================
+var usbDevice = null;
+var usbConnected = false;
+var usbEndpoint = 1; // Endpoint por defecto para impresoras
+
 // ==================== DETECCIÓN DE ENTORNO ====================
 function isLocalhost() {
     const hostname = window.location.hostname;
@@ -21,6 +26,17 @@ function verificarCompatibilidadBluetooth() {
     try {
         if (!navigator.bluetooth || typeof navigator.bluetooth.requestDevice !== 'function') {
             return { disponible: false, razon: 'Web Bluetooth no soportado en este navegador' };
+        }
+        return { disponible: true };
+    } catch (e) {
+        return { disponible: false, razon: e.message };
+    }
+}
+
+function verificarCompatibilidadUSB() {
+    try {
+        if (!navigator.usb || typeof navigator.usb.requestDevice !== 'function') {
+            return { disponible: false, razon: 'WebUSB no soportado en este navegador' };
         }
         return { disponible: true };
     } catch (e) {
@@ -134,7 +150,109 @@ document.addEventListener('DOMContentLoaded', () => {
     iniciarHeartbeat();
 });
 
-// ==================== CONECTAR IMPRESORA ====================
+// ==================== CONECTAR IMPRESORA USB ====================
+async function conectarImpresoraUSB() {
+    const compatible = verificarCompatibilidadUSB();
+    if (!compatible.disponible) {
+        mostrarNotificacion('❌ WebUSB no disponible. Usa Chrome en Android.', 'danger');
+        return false;
+    }
+    
+    try {
+        mostrarNotificacion('🔍 Buscando impresora USB...', 'info');
+        
+        // Filtrar por vendorId comunes de impresoras térmicas
+        usbDevice = await navigator.usb.requestDevice({
+            filters: [
+                { vendorId: 0x0416 }, // Winbond
+                { vendorId: 0x04B8 }, // Epson
+                { vendorId: 0x0483 }, // STMicroelectronics
+                { vendorId: 0x067B }, // Prolific
+                { vendorId: 0x0B05 }, // Acer
+                { vendorId: 0x1A86 }, // QinHeng
+                { vendorId: 0x0FE6 }, // ICS Advent
+            ]
+        });
+        
+        if (!usbDevice) {
+            throw new Error('No se seleccionó ningún dispositivo');
+        }
+        
+        mostrarNotificacion('✅ Conectando USB...', 'info');
+        
+        await usbDevice.open();
+        await usbDevice.selectConfiguration(1);
+        await usbDevice.claimInterface(0);
+        
+        // Obtener el endpoint de salida
+        const interface_ = usbDevice.configuration.interfaces[0];
+        const endpoint = interface_.alternate.endpoints.find(e => e.direction === 'out');
+        if (endpoint) {
+            usbEndpoint = endpoint.endpointNumber;
+        }
+        
+        usbConnected = true;
+        localStorage.setItem('usbConectada', 'true');
+        
+        const btn = document.getElementById('btnConectarUSB');
+        if (btn) {
+            btn.innerHTML = `<i class="fas fa-usb"></i> USB ✅`;
+            btn.className = 'btn btn-success w-100 mb-2 fw-bold py-2';
+        }
+        
+        mostrarNotificacion('✅ Impresora USB conectada', 'success');
+        console.log('✅ USB conectado:', usbDevice.productName || 'Impresora');
+        return true;
+        
+    } catch (error) {
+        console.error('Error USB:', error);
+        usbConnected = false;
+        usbDevice = null;
+        localStorage.removeItem('usbConectada');
+        
+        let mensaje = 'Error USB: ';
+        if (error.message.includes('No se seleccionó')) {
+            mensaje = '⚠️ No se seleccionó impresora USB';
+        } else {
+            mensaje += error.message;
+        }
+        
+        mostrarNotificacion(mensaje, 'warning');
+        return false;
+    }
+}
+
+// ==================== ENVIAR POR USB ====================
+async function enviarPorUSB(ticket) {
+    if (!usbDevice || !usbConnected) {
+        console.log('⚠️ USB no conectado');
+        return false;
+    }
+    
+    try {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(ticket);
+        
+        // Enviar en chunks de 64 bytes (estándar USB para impresoras)
+        const chunkSize = 64;
+        for (let i = 0; i < data.length; i += chunkSize) {
+            const chunk = data.slice(i, i + chunkSize);
+            await usbDevice.transferOut(usbEndpoint, chunk);
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        
+        console.log('✅ Ticket enviado por USB');
+        return true;
+    } catch (error) {
+        console.error('Error imprimiendo por USB:', error);
+        usbConnected = false;
+        usbDevice = null;
+        localStorage.removeItem('usbConectada');
+        return false;
+    }
+}
+
+// ==================== CONECTAR IMPRESORA BLUETOOTH ====================
 async function conectarImpresora() {
     if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
         mostrarNotificacion('📱 Modo simulación activo.', 'info');
@@ -242,7 +360,7 @@ async function conectarImpresora() {
     }
 }
 
-// ==================== ENVIAR DATOS A IMPRESORA ====================
+// ==================== ENVIAR DATOS A IMPRESORA (USB + BLUETOOTH) ====================
 async function enviarAImpresora(ticket) {
     if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
         console.log('📄 TICKET (SIMULACIÓN):');
@@ -252,7 +370,22 @@ async function enviarAImpresora(ticket) {
         return true;
     }
     
-    // Verificar conexión
+    // === 1. INTENTAR POR USB ===
+    if (usbConnected || localStorage.getItem('usbConectada') === 'true') {
+        try {
+            const impreso = await enviarPorUSB(ticket);
+            if (impreso) {
+                return true;
+            }
+        } catch (error) {
+            console.warn('⚠️ Error en USB, intentando Bluetooth...');
+        }
+    }
+    
+    // === 2. FALLBACK: BLUETOOTH ===
+    console.log('🔄 Intentando impresión por Bluetooth...');
+    
+    // Verificar conexión Bluetooth
     if (!bluetoothCharacteristicGlobal || !bluetoothServerGlobal) {
         console.log('🔄 Conexión perdida, intentando reconectar...');
         const conectado = await conectarImpresora();
@@ -332,8 +465,8 @@ function construirTicket(cliente, metodoPago, total) {
     ticket += 'Gracias por su visita' + LINE_FEED;
     ticket += 'Vuelva pronto' + LINE_FEED + LINE_FEED;
     ticket += '\x1B\x64\x03'; // Avanzar 3 líneas
-   ticket += '\x1B\x70\x00\x32\xFA';  // Abrir cajón
-    ticket += '\x1D\x56\x00';
+    ticket += '\x1B\x70\x00\x32\xFA';  // Abrir cajón
+    ticket += '\x1D\x56\x00'; // Cortar papel
     
     return ticket;
 }
@@ -395,8 +528,8 @@ function construirTicketCierre(cierre) {
     }
     ticket += SEP2;
     ticket += 'Gracias' + LINE_FEED;
-    ticket += '\x1B\x64\x03'; // Avanzar 3 líneas
-    ticket += '\x1B\x70\x00\x32\xFA';  // Abrir cajón
+    ticket += '\x1B\x64\x03';
+    ticket += '\x1B\x70\x00\x32\xFA';
     ticket += '\x1D\x56\x00';
     
     return ticket;
@@ -503,7 +636,6 @@ async function cobrarConTicket() {
     
     localStorage.setItem('ticketData', JSON.stringify(ticketData));
     
-    // Verificar si es una orden pendiente
     if (window.ordenSeleccionada) {
         console.log(`💰 Cobrando orden pendiente ID: ${window.ordenSeleccionada}`);
         
@@ -546,7 +678,6 @@ async function cobrarConTicket() {
         }
     }
     
-    // Ejecutar el cobro normal
     if (typeof window.procesarPago === 'function') {
         await window.procesarPago();
     } else {
@@ -573,12 +704,10 @@ async function cobrarConTicket() {
         await abrirCajaDespuesDeCobro();
     }
     
-    // ✅ LIMPIAR COMPLETAMENTE EL CARRITO Y CAMPOS
     if (typeof window.limpiarCarrito === 'function') {
         window.limpiarCarrito();
         console.log('🧹 Carrito y campos limpiados después de imprimir');
     } else {
-        // Fallback
         window.carrito = [];
         const clienteInput = document.getElementById('cliente');
         if (clienteInput) clienteInput.value = '';
@@ -587,7 +716,6 @@ async function cobrarConTicket() {
         const totalSpan = document.getElementById('cartTotal');
         if (totalSpan) totalSpan.innerText = '$0.00';
         
-        // Limpiar campos de efectivo
         const inputRecibido = document.getElementById('input-recibido');
         if (inputRecibido) inputRecibido.value = '';
         const inputRecibidoUsd = document.getElementById('input-recibido-usd');
@@ -598,7 +726,6 @@ async function cobrarConTicket() {
         if (cambioSpan) cambioSpan.innerText = '$0.00';
     }
     
-    // ✅ REINICIAR orden seleccionada
     window.ordenSeleccionada = null;
     
     console.log('🧹 Limpieza completa después de cobrar');
@@ -616,8 +743,54 @@ function mostrarNotificacion(mensaje, tipo) {
     setTimeout(() => div.remove(), 4000);
 }
 
+// ==================== DESCONECTAR IMPRESORA ====================
+function desconectarImpresora() {
+    // Desconectar Bluetooth
+    if (bluetoothServerGlobal) {
+        try {
+            bluetoothServerGlobal.disconnect();
+        } catch(e) {}
+        bluetoothServerGlobal = null;
+        bluetoothCharacteristicGlobal = null;
+        bluetoothDeviceGlobal = null;
+    }
+    
+    // Desconectar USB
+    if (usbDevice) {
+        try {
+            usbDevice.close();
+        } catch(e) {}
+        usbDevice = null;
+        usbConnected = false;
+        localStorage.removeItem('usbConectada');
+    }
+    
+    impresoraConectadaGlobal = false;
+    localStorage.removeItem('impresoraConectada');
+    localStorage.removeItem('bluetoothDeviceInfo');
+    
+    const btnBT = document.getElementById('btnConectarImpresora');
+    if (btnBT) {
+        btnBT.innerHTML = `<i class="fas fa-bluetooth"></i> CONECTAR IMPRESORA`;
+        btnBT.className = 'btn btn-secondary w-100 mb-2 fw-bold py-2';
+    }
+    
+    const btnUSB = document.getElementById('btnConectarUSB');
+    if (btnUSB) {
+        btnUSB.innerHTML = `<i class="fas fa-usb"></i> CONECTAR USB`;
+        btnUSB.className = 'btn btn-secondary w-100 mb-2 fw-bold py-2';
+    }
+    
+    mostrarNotificacion('🔌 Impresora desconectada', 'info');
+    console.log('🔌 Impresora desconectada');
+}
+
+// Exponer función
+window.desconectarImpresora = desconectarImpresora;
+
 // ==================== EXPONER FUNCIONES GLOBALES ====================
 window.conectarImpresora = conectarImpresora;
+window.conectarImpresoraUSB = conectarImpresoraUSB;
 window.imprimirTicketAutomatico = imprimirTicketAutomatico;
 window.imprimirTicketCierre = imprimirTicketCierre;
 window.abrirCajaDespuesDeCobro = abrirCajaDespuesDeCobro;

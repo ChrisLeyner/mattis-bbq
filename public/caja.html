@@ -227,7 +227,7 @@
     </style>
 </head>
 <body>
-    <nav class="navbar navbar-dark bg-dark sticky-top">
+        <nav class="navbar navbar-dark bg-dark sticky-top">
         <div class="container-fluid">
             <a class="navbar-brand" href="#">
                 <i class="fas fa-cash-register"></i> CAJA - MATTI'S B-B-Q
@@ -242,9 +242,38 @@
                 <button onclick="mostrarSeccion('cobros')" class="btn btn-warning btn-sm me-1">
                     <i class="fas fa-clipboard-list"></i> ÓRDENES POR COBRAR
                 </button>
-               <button onclick="window.open('stock.html', '_blank')" class="btn btn-outline-light btn-sm me-1">
+                <button onclick="window.open('stock.html', '_blank')" class="btn btn-outline-light btn-sm me-1">
                     <i class="fas fa-boxes"></i> STOCK
                 </button>
+                <!-- Menú de Configuración (Engrane) -->
+                <div class="btn-group" style="display: inline-block;">
+                    <button type="button" class="btn btn-outline-light btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li>
+                            <button class="dropdown-item" onclick="conectarImpresora()">
+                                <i class="fas fa-bluetooth"></i> Conectar Bluetooth
+                            </button>
+                        </li>
+                        <li>
+                            <button class="dropdown-item" onclick="conectarImpresoraUSB()">
+                                <i class="fas fa-usb"></i> Conectar USB
+                            </button>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <button class="dropdown-item" onclick="activarModoSimulacion()">
+                                <i class="fas fa-code"></i> Modo Simulación
+                            </button>
+                        </li>
+                        <li>
+                            <button class="dropdown-item text-danger" onclick="desconectarImpresora()">
+                                <i class="fas fa-times-circle"></i> Desconectar
+                            </button>
+                        </li>
+                    </ul>
+                </div>
             </div>
         </div>
     </nav>
@@ -336,10 +365,6 @@
                             <!-- Cargar script de impresión -->
                             <script src="/js/printing.js"></script>
 
-                            <!-- Agregar botón de conexión en el carrito (debajo de COBRAR o en navbar) -->
-                            <button id="btnConectarImpresora" onclick="conectarImpresora()" class="btn btn-secondary w-100 mb-2 fw-bold py-2">
-                                 <i class="fas fa-bluetooth"></i> CONECTAR IMPRESORA
-                            </button>
                             <button onclick="enviarACocinaLocal()" class="btn btn-warning w-100 mb-2 fw-bold py-2">
                                 <i class="fas fa-utensils"></i> ENVIAR A COCINA (Local)
                             </button>
