@@ -18,6 +18,21 @@
         .btn-admin:hover { background: #b71c1c; color: white; }
         .password-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 9999; display: flex; align-items: center; justify-content: center; }
         .password-box { background: white; border-radius: 16px; padding: 30px; max-width: 400px; width: 90%; }
+        
+        /* Estilos para respaldos */
+        .backup-card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid #28a745; }
+        .backup-card.warning { border-left-color: #ffc107; }
+        .backup-card.danger { border-left-color: #dc3545; }
+        .status-indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .status-online { background: #28a745; }
+        .status-offline { background: #dc3545; }
+        .status-warning { background: #ffc107; }
+        .drop-zone { border: 2px dashed #ccc; border-radius: 12px; padding: 30px; text-align: center; cursor: pointer; transition: 0.3s; margin: 15px 0; }
+        .drop-zone:hover { border-color: #28a745; background: #f0fff4; }
+        .drop-zone.dragover { border-color: #28a745; background: #e8f5e9; }
+        .backup-list { max-height: 300px; overflow-y: auto; }
+        .backup-history-item { border-bottom: 1px solid #eee; padding: 8px 0; }
+        .backup-history-item:last-child { border-bottom: none; }
     </style>
 </head>
 <body>
@@ -90,17 +105,32 @@
                     </div>
                 </div>
 
-                <!-- Respaldos -->
+                <!-- Respaldos (integrado) -->
                 <div class="tab-pane fade" id="backup" role="tabpanel">
                     <div class="admin-card">
                         <h5><i class="fas fa-database"></i> Respaldos de Base de Datos</h5>
+                        
+                        <!-- Estado de la base de datos -->
+                        <div class="backup-card" id="statusCard">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="status-indicator status-online" id="statusIndicator"></span>
+                                    <strong>Estado de la base de datos</strong>
+                                </div>
+                                <span id="statusText" class="badge bg-success">ONLINE</span>
+                            </div>
+                            <div class="mt-2" id="dbInfo">
+                                <small class="text-muted">Cargando información...</small>
+                            </div>
+                        </div>
+
                         <div class="row g-3 mt-2">
                             <div class="col-md-6">
                                 <div class="p-3 border rounded text-center">
                                     <i class="fas fa-download fa-3x text-success mb-2"></i>
                                     <h6>Descargar Respaldo</h6>
                                     <p class="text-muted small">Descarga un respaldo completo de la base de datos</p>
-                                    <button onclick="window.location.href='/admin/backup'" class="btn btn-success w-100">📥 Descargar</button>
+                                    <button onclick="crearRespaldo()" class="btn btn-success w-100">📥 Descargar</button>
                                 </div>
                             </div>
                             <div class="col-md-6">
@@ -108,12 +138,45 @@
                                     <i class="fas fa-upload fa-3x text-warning mb-2"></i>
                                     <h6>Restaurar Respaldo</h6>
                                     <p class="text-muted small">Sube un archivo de respaldo para restaurar</p>
-                                    <input type="file" id="restoreFile" accept=".sqlite,.db" style="display:none;" onchange="restaurarRespaldo(event)">
-                                    <button onclick="document.getElementById('restoreFile').click()" class="btn btn-warning w-100">📤 Restaurar</button>
+                                    <input type="file" id="restoreInput" accept=".sqlite,.db" style="display:none;" onchange="restaurarRespaldo(event)">
+                                    <button onclick="document.getElementById('restoreInput').click()" class="btn btn-warning w-100">📤 Restaurar</button>
                                 </div>
                             </div>
                         </div>
-                        <div id="backupInfo" class="mt-3"></div>
+
+                        <!-- Zona de arrastre -->
+                        <div id="dropZone" class="drop-zone" onclick="document.getElementById('restoreInput').click()">
+                            <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-2"></i>
+                            <p class="mb-0"><strong>Arrastra tu archivo de respaldo aquí</strong></p>
+                            <small class="text-muted">o haz clic para seleccionarlo</small>
+                        </div>
+
+                        <!-- Progreso -->
+                        <div id="progressContainer" style="display: none;" class="mt-3">
+                            <div class="d-flex justify-content-between">
+                                <span id="progressText">Subiendo...</span>
+                                <span id="progressPercent">0%</span>
+                            </div>
+                            <div class="progress">
+                                <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%;"></div>
+                            </div>
+                        </div>
+
+                        <!-- Historial de respaldos -->
+                        <div class="mt-3">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6><i class="fas fa-history"></i> Historial de respaldos</h6>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="cargarHistorial()">
+                                    <i class="fas fa-sync-alt"></i> Actualizar
+                                </button>
+                            </div>
+                            <div id="historialList" class="backup-list">
+                                <div class="text-center text-muted p-3">No hay respaldos en el historial</div>
+                            </div>
+                            <button class="btn btn-link btn-sm text-danger mt-2" onclick="vaciarHistorial()">
+                                <i class="fas fa-trash"></i> Vaciar historial
+                            </button>
+                        </div>
                     </div>
                 </div>
 
