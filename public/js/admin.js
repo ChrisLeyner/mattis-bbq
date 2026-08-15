@@ -30,7 +30,15 @@ function verificarPassword() {
 async function cargarDashboard() {
     try {
         const response = await fetch('/api/admin/dashboard');
+        if (!response.ok) {
+            throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
         const data = await response.json();
+        console.log('📊 Datos del dashboard:', data);
+        
+        // Asegurar que ventasPorMetodo sea un array
+        const ventasPorMetodo = Array.isArray(data.ventasPorMetodo) ? data.ventasPorMetodo : [];
+        
         document.getElementById('dashboardContent').innerHTML = `
             <div class="row g-3">
                 <div class="col-md-3 col-6">
@@ -62,18 +70,24 @@ async function cargarDashboard() {
                 <div class="col-12">
                     <div class="admin-card">
                         <h6>Ventas por Método de Pago</h6>
-                        ${data.ventasPorMetodo ? data.ventasPorMetodo.map(m => `
+                        ${ventasPorMetodo.length > 0 ? ventasPorMetodo.map(m => `
                             <div class="d-flex justify-content-between border-bottom py-1">
-                                <span>${m.metodo_pago}</span>
-                                <span><strong>$${m.total.toFixed(2)}</strong> (${m.cantidad} ventas)</span>
+                                <span>${m.metodo_pago || 'Sin método'}</span>
+                                <span><strong>$${(m.total || 0).toFixed(2)}</strong> (${m.cantidad || 0} ventas)</span>
                             </div>
-                        `).join('') : '<p class="text-muted">No hay datos</p>'}
+                        `).join('') : '<p class="text-muted">No hay ventas registradas</p>'}
                     </div>
                 </div>
             </div>
         `;
     } catch (error) {
         console.error('Error cargando dashboard:', error);
+        document.getElementById('dashboardContent').innerHTML = `
+            <div class="alert alert-danger">
+                ❌ Error al cargar el dashboard: ${error.message}
+                <br><button class="btn btn-sm btn-outline-danger mt-2" onclick="cargarDashboard()">Reintentar</button>
+            </div>
+        `;
     }
 }
 
@@ -386,10 +400,31 @@ function vaciarHistorial() {
 
 // ==================== VENTAS ====================
 async function cargarVentas(periodo) {
+    const contentDiv = document.getElementById('salesContent');
+    contentDiv.innerHTML = '<div class="text-center p-5">Cargando ventas...</div>';
+    
     try {
         const response = await fetch(`/api/admin/sales/${periodo}`);
+        if (!response.ok) {
+            throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
         const data = await response.json();
-        document.getElementById('salesContent').innerHTML = `
+        console.log(`📊 Ventas (${periodo}):`, data);
+        
+        // Asegurar que porMetodo y ultimasVentas sean arrays
+        const porMetodo = Array.isArray(data.porMetodo) ? data.porMetodo : [];
+        const ultimasVentas = Array.isArray(data.ultimasVentas) ? data.ultimasVentas : [];
+        
+        if (data.totalVentas === 0 && ultimasVentas.length === 0) {
+            contentDiv.innerHTML = `
+                <div class="alert alert-info text-center">
+                    No hay ventas registradas en este período
+                </div>
+            `;
+            return;
+        }
+        
+        contentDiv.innerHTML = `
             <div class="row g-3">
                 <div class="col-md-6">
                     <div class="admin-card">
@@ -402,24 +437,24 @@ async function cargarVentas(periodo) {
                 <div class="col-md-6">
                     <div class="admin-card">
                         <h6>💳 Por Método de Pago</h6>
-                        ${data.porMetodo ? data.porMetodo.map(m => `
+                        ${porMetodo.length > 0 ? porMetodo.map(m => `
                             <div class="d-flex justify-content-between border-bottom py-1">
-                                <span>${m.metodo_pago}</span>
-                                <span><strong>$${m.total.toFixed(2)}</strong> (${m.cantidad} ventas)</span>
+                                <span>${m.metodo_pago || 'Sin método'}</span>
+                                <span><strong>$${(m.total || 0).toFixed(2)}</strong> (${m.cantidad || 0} ventas)</span>
                             </div>
-                        `).join('') : '<p class="text-muted">No hay datos</p>'}
+                        `).join('') : '<p class="text-muted">No hay ventas por método</p>'}
                     </div>
                 </div>
                 <div class="col-12">
                     <div class="admin-card">
                         <h6>📋 Últimas ventas</h6>
-                        ${data.ultimasVentas && data.ultimasVentas.length > 0 ? data.ultimasVentas.map(v => `
+                        ${ultimasVentas.length > 0 ? ultimasVentas.map(v => `
                             <div class="d-flex justify-content-between border-bottom py-1 small">
-                                <span>${v.order_number || v.id}</span>
-                                <span>${v.cliente}</span>
-                                <span>$${v.total.toFixed(2)}</span>
-                                <span>${v.metodo_pago}</span>
-                                <span class="text-muted">${new Date(v.created_at).toLocaleDateString()}</span>
+                                <span>${v.order_number || v.id || 'N/A'}</span>
+                                <span>${v.cliente || 'Cliente'}</span>
+                                <span>$${(v.total || 0).toFixed(2)}</span>
+                                <span>${v.metodo_pago || 'N/A'}</span>
+                                <span class="text-muted">${v.created_at ? new Date(v.created_at).toLocaleDateString() : 'N/A'}</span>
                             </div>
                         `).join('') : '<p class="text-muted">No hay ventas recientes</p>'}
                     </div>
@@ -428,7 +463,12 @@ async function cargarVentas(periodo) {
         `;
     } catch (error) {
         console.error('Error cargando ventas:', error);
-        document.getElementById('salesContent').innerHTML = '<div class="alert alert-danger">Error al cargar ventas</div>';
+        contentDiv.innerHTML = `
+            <div class="alert alert-danger">
+                ❌ Error al cargar ventas: ${error.message}
+                <br><button class="btn btn-sm btn-outline-danger mt-2" onclick="cargarVentas('${periodo}')">Reintentar</button>
+            </div>
+        `;
     }
 }
 
