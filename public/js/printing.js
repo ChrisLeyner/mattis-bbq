@@ -161,16 +161,15 @@ async function conectarImpresoraUSB() {
     try {
         mostrarNotificacion('🔍 Buscando impresora USB...', 'info');
         
-        // Filtrar por vendorId comunes de impresoras térmicas
         usbDevice = await navigator.usb.requestDevice({
             filters: [
-                { vendorId: 0x0416 }, // Winbond
-                { vendorId: 0x04B8 }, // Epson
-                { vendorId: 0x0483 }, // STMicroelectronics
-                { vendorId: 0x067B }, // Prolific
-                { vendorId: 0x0B05 }, // Acer
-                { vendorId: 0x1A86 }, // QinHeng
-                { vendorId: 0x0FE6 }, // ICS Advent
+                { vendorId: 0x0416 },
+                { vendorId: 0x04B8 },
+                { vendorId: 0x0483 },
+                { vendorId: 0x067B },
+                { vendorId: 0x0B05 },
+                { vendorId: 0x1A86 },
+                { vendorId: 0x0FE6 },
             ]
         });
         
@@ -184,7 +183,6 @@ async function conectarImpresoraUSB() {
         await usbDevice.selectConfiguration(1);
         await usbDevice.claimInterface(0);
         
-        // Obtener el endpoint de salida
         const interface_ = usbDevice.configuration.interfaces[0];
         const endpoint = interface_.alternate.endpoints.find(e => e.direction === 'out');
         if (endpoint) {
@@ -218,6 +216,7 @@ async function conectarImpresoraUSB() {
         }
         
         mostrarNotificacion(mensaje, 'warning');
+        // ❌ ELIMINADO: NO activar modo simulación automáticamente
         return false;
     }
 }
@@ -254,9 +253,17 @@ async function enviarPorUSB(ticket) {
 
 // ==================== CONECTAR IMPRESORA BLUETOOTH ====================
 async function conectarImpresora() {
+    // Si ya está en modo simulación manual, mostrar mensaje
     if (modoSimulacionGlobal || localStorage.getItem('impresoraSimulacion') === 'true') {
-        mostrarNotificacion('📱 Modo simulación activo.', 'info');
+        mostrarNotificacion('📱 Modo simulación activo (manual).', 'info');
         return true;
+    }
+    
+    // Verificar compatibilidad Bluetooth
+    const compatible = verificarCompatibilidadBluetooth();
+    if (!compatible.disponible) {
+        mostrarNotificacion('❌ Web Bluetooth no disponible en este navegador.', 'danger');
+        return false;
     }
     
     // Si ya hay conexión activa, usarla
@@ -298,12 +305,6 @@ async function conectarImpresora() {
             console.log('⚠️ Error reconectando:', e.message);
             bluetoothDeviceGlobal = null;
         }
-    }
-    
-    const compatible = verificarCompatibilidadBluetooth();
-    if (!compatible.disponible) {
-        mostrarNotificacion('❌ Web Bluetooth no disponible.', 'danger');
-        return false;
     }
     
     try {
@@ -356,6 +357,8 @@ async function conectarImpresora() {
         }
         
         mostrarNotificacion(mensaje, 'warning');
+        // ❌ ELIMINADO: NO activar modo simulación automáticamente
+        // activarModoSimulacion();
         return false;
     }
 }
