@@ -250,29 +250,19 @@
                     <button type="button" class="btn btn-outline-light btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                         <i class="fas fa-cog"></i>
                     </button>
-                    <ul class="dropdown-menu dropdown-menu-end">
-                        <li>
-                            <button class="dropdown-item" onclick="conectarImpresora()">
-                                <i class="fas fa-bluetooth"></i> Conectar Bluetooth
-                            </button>
-                        </li>
-                        <li>
-                            <button class="dropdown-item" onclick="conectarImpresoraUSB()">
-                                <i class="fas fa-usb"></i> Conectar USB
-                            </button>
-                        </li>
-                        <li><hr class="dropdown-divider"></li>
-                        <li>
-                            <button class="dropdown-item" onclick="activarModoSimulacion()">
-                                <i class="fas fa-code"></i> Modo Simulación
-                            </button>
-                        </li>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><button class="dropdown-item" onclick="conectarImpresora()"><i class="fas fa-bluetooth"></i> Conectar Bluetooth</button></li>
+                    <li><button class="dropdown-item" onclick="conectarImpresoraUSB()"><i class="fas fa-usb"></i> Conectar USB</button></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><button class="dropdown-item" onclick="activarModoSimulacion()"><i class="fas fa-code"></i> Modo Simulación</button></li>
+                    <li><button class="dropdown-item text-danger" onclick="desconectarImpresora()"><i class="fas fa-times-circle"></i> Desconectar</button></li>
+                </ul>
+                </div>
                         <li>
                             <button class="dropdown-item text-danger" onclick="desconectarImpresora()">
                                 <i class="fas fa-times-circle"></i> Desconectar
                             </button>
                         </li>
-                    </ul>
                 </div>
             </div>
         </div>
@@ -409,6 +399,7 @@
         <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg">
     </audio>
 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="/js/printing.js"></script>
     <script src="/js/caja.js"></script>
