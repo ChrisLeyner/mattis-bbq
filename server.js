@@ -4,9 +4,6 @@ const socketIO = require('socket.io');
 const cors = require('cors');
 const path = require('path');
 const db = require('./server/database_server/database.js'); // Ajusta la ruta si es diferente
-const db = require('better-sqlite3')('database.sqlite');
-const sqlite3 = require('sqlite3').verbose();
-const db = new sqlite3.Database('database.sqlite');
 
 const app = express();
 const server = http.createServer(app);
