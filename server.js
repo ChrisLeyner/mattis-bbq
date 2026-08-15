@@ -537,3 +537,79 @@ app.get('/api/cash/drawer/status', (req, res) => {
         port: drawerPort ? drawerPort.path : 'no conectado'
     });
 });
+
+// ==================== ADMINISTRACIÓN ====================
+
+// Dashboard
+app.get('/api/admin/dashboard', (req, res) => {
+    try {
+        const totalVentas = db.prepare("SELECT COUNT(*) as count FROM orders WHERE estado = 'pagado'").get();
+        const totalMonto = db.prepare("SELECT SUM(total) as total FROM orders WHERE estado = 'pagado'").get();
+        const totalProductos = db.prepare("SELECT COUNT(*) as count FROM products WHERE activo = 1").get();
+        const totalPedidos = db.prepare("SELECT COUNT(*) as count FROM orders").get();
+        const ventasPorMetodo = db.prepare("SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders WHERE estado = 'pagado' GROUP BY metodo_pago").all();
+        
+        res.json({
+            totalVentas: totalVentas?.count || 0,
+            totalMonto: totalMonto?.total || 0,
+            totalProductos: totalProductos?.count || 0,
+            totalPedidos: totalPedidos?.count || 0,
+            ventasPorMetodo: ventasPorMetodo || []
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Ventas por período
+app.get('/api/admin/sales/:periodo', (req, res) => {
+    const { periodo } = req.params;
+    let where = '';
+    let periodoText = '';
+    const now = new Date();
+    
+    switch(periodo) {
+        case 'dia':
+            where = "WHERE date(created_at) = date('now', 'localtime') AND estado = 'pagado'";
+            periodoText = 'Hoy';
+            break;
+        case 'semana':
+            where = "WHERE date(created_at) >= date('now', 'localtime', '-7 days') AND estado = 'pagado'";
+            periodoText = 'Última semana';
+            break;
+        case 'mes':
+            where = "WHERE date(created_at) >= date('now', 'localtime', '-30 days') AND estado = 'pagado'";
+            periodoText = 'Último mes';
+            break;
+        default:
+            return res.status(400).json({ error: 'Período no válido' });
+    }
+    
+    try {
+        const totalVentas = db.prepare(`SELECT COUNT(*) as count FROM orders ${where}`).get();
+        const totalMonto = db.prepare(`SELECT SUM(total) as total FROM orders ${where}`).get();
+        const porMetodo = db.prepare(`SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders ${where} GROUP BY metodo_pago`).all();
+        const ultimasVentas = db.prepare(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT 20`).all();
+        
+        res.json({
+            periodo: periodoText,
+            totalVentas: totalVentas?.count || 0,
+            totalMonto: totalMonto?.total || 0,
+            porMetodo: porMetodo || [],
+            ultimasVentas: ultimasVentas || []
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Eliminar producto (soft delete)
+app.delete('/api/products/:id', (req, res) => {
+    const { id } = req.params;
+    try {
+        db.prepare("UPDATE products SET activo = 0 WHERE id = ?").run(id);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});

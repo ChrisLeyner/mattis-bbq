@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Panel Administración - Matti's BBQ</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { background: #f4f4f4; padding-bottom: 20px; }
+        .admin-card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .admin-card .card-title { color: #d32f2f; border-bottom: 2px solid #d32f2f; padding-bottom: 10px; margin-bottom: 15px; }
+        .stat-card { text-align: center; padding: 20px; border-radius: 12px; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .stat-card .number { font-size: 2.5rem; font-weight: bold; color: #d32f2f; }
+        .stat-card .label { color: #666; font-size: 0.9rem; }
+        .product-item { border-bottom: 1px solid #eee; padding: 10px 0; }
+        .btn-admin { background: #d32f2f; color: white; border: none; }
+        .btn-admin:hover { background: #b71c1c; color: white; }
+        .password-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 9999; display: flex; align-items: center; justify-content: center; }
+        .password-box { background: white; border-radius: 16px; padding: 30px; max-width: 400px; width: 90%; }
+    </style>
+</head>
+<body>
+    <!-- Pantalla de contraseña -->
+    <div id="passwordOverlay" class="password-overlay">
+        <div class="password-box">
+            <h4 class="text-center mb-3"><i class="fas fa-lock"></i> Acceso Administrador</h4>
+            <p class="text-muted text-center">Ingresa la contraseña para acceder al panel</p>
+            <input type="password" id="adminPassword" class="form-control form-control-lg mb-3" placeholder="Contraseña" onkeyup="if(event.key==='Enter') verificarPassword()">
+            <button onclick="verificarPassword()" class="btn btn-admin w-100">ACCEDER</button>
+            <p id="passwordError" class="text-danger text-center mt-2" style="display: none;">❌ Contraseña incorrecta</p>
+        </div>
+    </div>
+
+    <!-- Contenido principal -->
+    <div id="adminContent" style="display: none;">
+        <nav class="navbar navbar-dark bg-dark sticky-top">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="#"><i class="fas fa-user-shield"></i> ADMIN - MATTI'S B-B-Q</a>
+                <div>
+                    <button class="btn btn-outline-light btn-sm me-1" onclick="cargarDashboard()"><i class="fas fa-sync-alt"></i> Actualizar</button>
+                    <button class="btn btn-outline-light btn-sm" onclick="location.href='/'"><i class="fas fa-arrow-left"></i> Volver a Caja</button>
+                </div>
+            </div>
+        </nav>
+
+        <div class="container mt-3">
+            <!-- Pestañas de navegación -->
+            <ul class="nav nav-tabs mb-3" id="adminTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="dashboard-tab" data-bs-toggle="tab" data-bs-target="#dashboard" type="button" role="tab">
+                        <i class="fas fa-chart-pie"></i> Dashboard
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="products-tab" data-bs-toggle="tab" data-bs-target="#products" type="button" role="tab">
+                        <i class="fas fa-boxes"></i> Productos
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="backup-tab" data-bs-toggle="tab" data-bs-target="#backup" type="button" role="tab">
+                        <i class="fas fa-database"></i> Respaldos
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="sales-tab" data-bs-toggle="tab" data-bs-target="#sales" type="button" role="tab">
+                        <i class="fas fa-chart-bar"></i> Ventas
+                    </button>
+                </li>
+            </ul>
+
+            <div class="tab-content">
+                <!-- Dashboard -->
+                <div class="tab-pane fade show active" id="dashboard" role="tabpanel">
+                    <div id="dashboardContent">
+                        <div class="text-center p-5">Cargando datos...</div>
+                    </div>
+                </div>
+
+                <!-- Productos -->
+                <div class="tab-pane fade" id="products" role="tabpanel">
+                    <div class="admin-card">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5><i class="fas fa-boxes"></i> Gestión de Productos</h5>
+                            <button class="btn btn-success btn-sm" onclick="mostrarModalProducto()"><i class="fas fa-plus"></i> Agregar Producto</button>
+                        </div>
+                        <div id="productList" class="row">
+                            <div class="text-center p-5">Cargando productos...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Respaldos -->
+                <div class="tab-pane fade" id="backup" role="tabpanel">
+                    <div class="admin-card">
+                        <h5><i class="fas fa-database"></i> Respaldos de Base de Datos</h5>
+                        <div class="row g-3 mt-2">
+                            <div class="col-md-6">
+                                <div class="p-3 border rounded text-center">
+                                    <i class="fas fa-download fa-3x text-success mb-2"></i>
+                                    <h6>Descargar Respaldo</h6>
+                                    <p class="text-muted small">Descarga un respaldo completo de la base de datos</p>
+                                    <button onclick="window.location.href='/admin/backup'" class="btn btn-success w-100">📥 Descargar</button>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="p-3 border rounded text-center">
+                                    <i class="fas fa-upload fa-3x text-warning mb-2"></i>
+                                    <h6>Restaurar Respaldo</h6>
+                                    <p class="text-muted small">Sube un archivo de respaldo para restaurar</p>
+                                    <input type="file" id="restoreFile" accept=".sqlite,.db" style="display:none;" onchange="restaurarRespaldo(event)">
+                                    <button onclick="document.getElementById('restoreFile').click()" class="btn btn-warning w-100">📤 Restaurar</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="backupInfo" class="mt-3"></div>
+                    </div>
+                </div>
+
+                <!-- Ventas -->
+                <div class="tab-pane fade" id="sales" role="tabpanel">
+                    <div class="admin-card">
+                        <h5><i class="fas fa-chart-bar"></i> Reporte de Ventas</h5>
+                        <div class="row g-2 mb-3">
+                            <div class="col-4">
+                                <button class="btn btn-outline-secondary btn-sm w-100" onclick="cargarVentas('dia')">Hoy</button>
+                            </div>
+                            <div class="col-4">
+                                <button class="btn btn-outline-secondary btn-sm w-100" onclick="cargarVentas('semana')">Semana</button>
+                            </div>
+                            <div class="col-4">
+                                <button class="btn btn-outline-secondary btn-sm w-100" onclick="cargarVentas('mes')">Mes</button>
+                            </div>
+                        </div>
+                        <div id="salesContent">
+                            <div class="text-center p-5">Selecciona un período para ver las ventas</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para agregar/editar producto -->
+    <div class="modal fade" id="productModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title" id="productModalTitle"><i class="fas fa-edit"></i> Agregar Producto</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="editProductId">
+                    <div class="mb-3">
+                        <label class="form-label">Nombre del producto</label>
+                        <input type="text" id="editProductName" class="form-control" placeholder="Ej: Alitas BBQ">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Precio (MXN)</label>
+                        <input type="number" id="editProductPrice" class="form-control" placeholder="0.00" step="0.01">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Stock</label>
+                        <input type="number" id="editProductStock" class="form-control" placeholder="0">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">URL de imagen (opcional)</label>
+                        <input type="text" id="editProductImage" class="form-control" placeholder="https://ejemplo.com/imagen.jpg">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-danger" onclick="guardarProducto()">Guardar Producto</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <audio id="notificacion" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/admin.js"></script>
+</body>
+</html>
