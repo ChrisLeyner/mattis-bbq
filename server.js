@@ -543,29 +543,35 @@ app.get('/api/cash/drawer/status', (req, res) => {
 // Dashboard
 app.get('/api/admin/dashboard', (req, res) => {
     try {
-        const totalVentas = db.prepare("SELECT COUNT(*) as count FROM orders WHERE estado = 'pagado'").get();
-        const totalMonto = db.prepare("SELECT SUM(total) as total FROM orders WHERE estado = 'pagado'").get();
+        // ✅ Incluir TODOS los estados de venta (pagado, entregado, completado)
+        const totalVentas = db.prepare("SELECT COUNT(*) as count FROM orders WHERE estado IN ('pagado', 'entregado', 'completado')").get();
+        const totalMonto = db.prepare("SELECT SUM(total) as total FROM orders WHERE estado IN ('pagado', 'entregado', 'completado')").get();
         const totalProductos = db.prepare("SELECT COUNT(*) as count FROM products WHERE activo = 1").get();
         const totalPedidos = db.prepare("SELECT COUNT(*) as count FROM orders").get();
-        const ventasPorMetodo = db.prepare("SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders WHERE estado = 'pagado' GROUP BY metodo_pago").all();
         
-
-        console.log('📊 Dashboard datos:', {
+        // ✅ Obtener ventas agrupadas por método de pago
+        const ventasPorMetodo = db.prepare("SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders WHERE estado IN ('pagado', 'entregado', 'completado') GROUP BY metodo_pago").all();
+        
+        // ✅ Asegurar que ventasPorMetodo sea un array
+        const ventasArray = Array.isArray(ventasPorMetodo) ? ventasPorMetodo : [];
+        
+        console.log('📊 Dashboard:', {
             totalVentas: totalVentas?.count || 0,
             totalMonto: totalMonto?.total || 0,
             totalProductos: totalProductos?.count || 0,
             totalPedidos: totalPedidos?.count || 0,
-            ventasPorMetodo: ventasPorMetodo || []
+            ventasPorMetodo: ventasArray
         });
-
+        
         res.json({
             totalVentas: totalVentas?.count || 0,
             totalMonto: totalMonto?.total || 0,
             totalProductos: totalProductos?.count || 0,
             totalPedidos: totalPedidos?.count || 0,
-            ventasPorMetodo: ventasPorMetodo || []
+            ventasPorMetodo: ventasArray
         });
     } catch (err) {
+        console.error('Error en dashboard:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -575,19 +581,18 @@ app.get('/api/admin/sales/:periodo', (req, res) => {
     const { periodo } = req.params;
     let where = '';
     let periodoText = '';
-    const now = new Date();
     
     switch(periodo) {
         case 'dia':
-            where = "WHERE date(created_at) = date('now', 'localtime') AND estado = 'pagado'";
+            where = "WHERE date(created_at) = date('now', 'localtime') AND estado IN ('pagado', 'entregado', 'completado')";
             periodoText = 'Hoy';
             break;
         case 'semana':
-            where = "WHERE date(created_at) >= date('now', 'localtime', '-7 days') AND estado = 'pagado'";
+            where = "WHERE date(created_at) >= date('now', 'localtime', '-7 days') AND estado IN ('pagado', 'entregado', 'completado')";
             periodoText = 'Última semana';
             break;
         case 'mes':
-            where = "WHERE date(created_at) >= date('now', 'localtime', '-30 days') AND estado = 'pagado'";
+            where = "WHERE date(created_at) >= date('now', 'localtime', '-30 days') AND estado IN ('pagado', 'entregado', 'completado')";
             periodoText = 'Último mes';
             break;
         default:
@@ -600,21 +605,26 @@ app.get('/api/admin/sales/:periodo', (req, res) => {
         const porMetodo = db.prepare(`SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders ${where} GROUP BY metodo_pago`).all();
         const ultimasVentas = db.prepare(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT 20`).all();
         
+        // ✅ Asegurar que sean arrays
+        const porMetodoArray = Array.isArray(porMetodo) ? porMetodo : [];
+        const ultimasVentasArray = Array.isArray(ultimasVentas) ? ultimasVentas : [];
+        
         console.log(`📊 Ventas ${periodoText}:`, {
             totalVentas: totalVentas?.count || 0,
             totalMonto: totalMonto?.total || 0,
-            porMetodo: porMetodo || [],
-            ultimasVentas: ultimasVentas || []
+            porMetodo: porMetodoArray,
+            ultimasVentas: ultimasVentasArray
         });
         
         res.json({
             periodo: periodoText,
             totalVentas: totalVentas?.count || 0,
             totalMonto: totalMonto?.total || 0,
-            porMetodo: porMetodo || [],
-            ultimasVentas: ultimasVentas || []
+            porMetodo: porMetodoArray,
+            ultimasVentas: ultimasVentasArray
         });
     } catch (err) {
+        console.error('Error en ventas:', err);
         res.status(500).json({ error: err.message });
     }
 });
