@@ -128,18 +128,16 @@ function iniciarHeartbeat() {
 document.addEventListener('DOMContentLoaded', () => {
     console.log('🔄 Inicializando módulo de impresión...');
     
+    // ✅ SOLO activar modo simulación si el usuario lo activó manualmente
     if (localStorage.getItem('impresoraSimulacion') === 'true') {
         activarModoSimulacion();
         return;
     }
     
-    const compatible = verificarCompatibilidadBluetooth();
-    if (!compatible.disponible) {
-        console.log('⚠️ Bluetooth no disponible:', compatible.razon);
-        activarModoSimulacion();
-        return;
-    }
+    // ❌ ELIMINADO: No activar modo simulación automáticamente en localhost
+    // ❌ ELIMINADO: No activar modo simulación automáticamente si no hay Bluetooth
     
+    // Solo verificar conexión si el usuario ya conectó antes
     verificarConexionImpresora();
     iniciarHeartbeat();
 });
@@ -739,6 +737,30 @@ function mostrarNotificacion(mensaje, tipo) {
     document.body.appendChild(div);
     setTimeout(() => div.remove(), 4000);
 }
+
+// ==================== DESACTIVAR MODO SIMULACIÓN ====================
+function desactivarModoSimulacion() {
+    modoSimulacionGlobal = false;
+    localStorage.removeItem('impresoraSimulacion');
+    localStorage.removeItem('impresoraConectada');
+    
+    impresoraConectadaGlobal = false;
+    bluetoothCharacteristicGlobal = null;
+    bluetoothServerGlobal = null;
+    bluetoothDeviceGlobal = null;
+    
+    const btn = document.getElementById('btnConectarImpresora');
+    if (btn) {
+        btn.innerHTML = `<i class="fas fa-bluetooth"></i> CONECTAR IMPRESORA`;
+        btn.className = 'btn btn-secondary w-100 mb-2 fw-bold py-2';
+    }
+    
+    mostrarNotificacion('🔧 Modo simulación desactivado', 'info');
+    console.log('🔧 Modo simulación desactivado');
+}
+
+// Exponer función
+window.desactivarModoSimulacion = desactivarModoSimulacion;
 
 // ==================== DESCONECTAR IMPRESORA ====================
 function desconectarImpresora() {
