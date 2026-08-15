@@ -549,6 +549,15 @@ app.get('/api/admin/dashboard', (req, res) => {
         const totalPedidos = db.prepare("SELECT COUNT(*) as count FROM orders").get();
         const ventasPorMetodo = db.prepare("SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders WHERE estado = 'pagado' GROUP BY metodo_pago").all();
         
+
+        console.log('📊 Dashboard datos:', {
+            totalVentas: totalVentas?.count || 0,
+            totalMonto: totalMonto?.total || 0,
+            totalProductos: totalProductos?.count || 0,
+            totalPedidos: totalPedidos?.count || 0,
+            ventasPorMetodo: ventasPorMetodo || []
+        });
+
         res.json({
             totalVentas: totalVentas?.count || 0,
             totalMonto: totalMonto?.total || 0,
@@ -590,6 +599,13 @@ app.get('/api/admin/sales/:periodo', (req, res) => {
         const totalMonto = db.prepare(`SELECT SUM(total) as total FROM orders ${where}`).get();
         const porMetodo = db.prepare(`SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders ${where} GROUP BY metodo_pago`).all();
         const ultimasVentas = db.prepare(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT 20`).all();
+        
+        console.log(`📊 Ventas ${periodoText}:`, {
+            totalVentas: totalVentas?.count || 0,
+            totalMonto: totalMonto?.total || 0,
+            porMetodo: porMetodo || [],
+            ultimasVentas: ultimasVentas || []
+        });
         
         res.json({
             periodo: periodoText,
