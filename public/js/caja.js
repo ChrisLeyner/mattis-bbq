@@ -402,49 +402,6 @@ async function cargarOrdenesPendientesCobro() {
     } catch (error) { console.error('Error:', error); }
 }
 
-function renderizarCobrosPendientes(orders) {
-    const container = document.getElementById('ordenesCobroPendiente');
-    if (!orders || orders.length === 0) {
-        container.innerHTML = '<div class="col-12 text-center text-muted p-5">No hay órdenes pendientes de cobro</div>';
-        return;
-    }
-    
-    container.innerHTML = orders.map(order => {
-        let items = [];
-        try { items = JSON.parse(order.items || '[]'); } catch(e) {}
-        items.forEach(item => {
-            item.precio_unitario = item.precio_unitario || (item.subtotal / item.cantidad) || 0;
-        });
-        const total = order.total || 0;
-        return `
-            <div class="col-md-6 col-lg-4">
-                <div class="order-item">
-                    <div class="d-flex justify-content-between">
-                        <strong>${escapeHtml(order.cliente)}</strong>
-                        <div>
-                            <span class="badge bg-warning">${order.estado}</span>
-                            <button class="btn btn-sm btn-danger ms-1" onclick="eliminarOrdenPendiente(${order.id}, '${order.order_number}', '${escapeHtml(order.cliente)}')" title="Eliminar orden">
-                                <i class="fas fa-trash"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <small class="text-muted">Orden: ${order.order_number}</small>
-                    <hr class="my-2">
-                    <div class="small">
-                        ${items.map(item => `<div>${item.cantidad}x ${escapeHtml(item.nombre)}</div>`).join('')}
-                    </div>
-                    <hr class="my-2">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <strong>Total: $${total.toFixed(2)}</strong>
-                        <button class="btn btn-sm btn-success" onclick="cargarOrdenYMostrarCobro(${order.id}, '${escapeHtml(order.cliente)}', ${total})">
-                            💰 COBRAR
-                        </button>
-                    </div>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
 
 // ==================== ELIMINAR ORDEN PENDIENTE ====================
 async function eliminarOrdenPendiente(orderId, orderNumber, cliente) {

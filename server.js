@@ -3,7 +3,7 @@ const http = require('http');
 const socketIO = require('socket.io');
 const cors = require('cors');
 const path = require('path');
-const db = require('./server/database_server/database.js'); // Ajusta la ruta si es diferente
+const db = require('./server/database_server/database.js');
 
 const app = express();
 const server = http.createServer(app);
@@ -223,465 +223,6 @@ app.put('/api/orders/:id/add-extra', (req, res) => {
   });
 });
 
-// ==================== CAJA ====================
-app.post('/api/cash/open', (req, res) => {
-  const { fondo_inicial, usuario, tipo_cambio_usd } = req.body;
-  db.run(
-    `INSERT INTO cash_register (fecha_apertura, fondo_inicial, usuario, estado, tipo_cambio_usd)
-     VALUES (datetime('now', 'localtime'), ?, ?, 'abierta', ?)`,
-    [fondo_inicial, usuario || 'Admin', tipo_cambio_usd || 17.00],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true, id: this.lastID });
-    }
-  );
-});
-
-app.get('/api/cash/status', (req, res) => {
-  db.get(`SELECT * FROM cash_register WHERE estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1`, (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(row || { estado: 'cerrada' });
-  });
-});
-
-const PDFDocument = require('pdfkit');
-const fs = require('fs');
-
-// ... dentro de app.post('/api/cash/close', ...)
-
-app.post('/api/cash/close', (req, res) => {
-  // Obtener turno abierto
-  db.get(`SELECT * FROM cash_register WHERE estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1`, (err, turno) => {
-    if (err || !turno) {
-      return res.status(400).json({ error: 'No hay turno abierto' });
-    }
-
-    // Obtener ventas del turno agrupadas por método de pago
-    db.all(`
-      SELECT metodo_pago, SUM(total) as total_mxn, SUM(total_usd) as total_usd
-      FROM orders 
-      WHERE created_at >= ? AND estado = 'pagado'
-      GROUP BY metodo_pago
-    `, [turno.fecha_apertura], (err, ventasPorMetodo) => {
-      if (err) return res.status(500).json({ error: err.message });
-
-      // Inicializar valores
-      let ventasEfectivo = 0, ventasTarjeta = 0, ventasTransferencia = 0, ventasDolaresMXN = 0, ventasDolaresUSD = 0;
-      ventasPorMetodo.forEach(v => {
-        if (v.metodo_pago === 'Efectivo') ventasEfectivo = v.total_mxn || 0;
-        else if (v.metodo_pago === 'Tarjeta') ventasTarjeta = v.total_mxn || 0;
-        else if (v.metodo_pago === 'Transferencia') ventasTransferencia = v.total_mxn || 0;
-        else if (v.metodo_pago === 'Dólares') {
-          ventasDolaresMXN = v.total_mxn || 0;
-          ventasDolaresUSD = v.total_usd || 0;
-        }
-      });
-      const totalVendidoMXN = ventasEfectivo + ventasTarjeta + ventasTransferencia + ventasDolaresMXN;
-      const efectivoEnCajaMXN = turno.fondo_inicial + ventasEfectivo;
-
-      // =============================================
-      // DATOS DEL CIERRE PARA EL TICKET
-      // =============================================
-      const datosCierre = {
-        fondoInicial: turno.fondo_inicial,
-        ventasEfectivo: ventasEfectivo,
-        ventasTarjeta: ventasTarjeta,
-        ventasTransferencia: ventasTransferencia,
-        ventasDolaresUSD: ventasDolaresUSD,
-        ventasDolaresMXN: ventasDolaresMXN,
-        totalVendidoMXN: totalVendidoMXN,
-        efectivoEnCajaMXN: efectivoEnCajaMXN,
-        fechaApertura: turno.fecha_apertura,
-        fechaCierre: new Date().toISOString()
-      };
-
-      // Generar PDF
-      const doc = new PDFDocument({ margin: 50 });
-      const buffers = [];
-      doc.on('data', buffers.push.bind(buffers));
-      doc.on('end', () => {
-        const pdfData = Buffer.concat(buffers);
-        // Enviar PDF y datos del cierre juntos
-        res.json({
-          success: true,
-          pdf: pdfData.toString('base64'), // Enviamos como base64
-          cierre: datosCierre
-        });
-      });
-
-      // ... (el resto del contenido del PDF)
-      doc.fontSize(20).text('MATTI\'S B-B-Q', { align: 'center' });
-      doc.moveDown();
-      doc.fontSize(16).text('REPORTE DE CIERRE DE CAJA', { align: 'center' });
-      doc.moveDown();
-      doc.fontSize(10).text(`Apertura: ${new Date(turno.fecha_apertura).toLocaleString()}`, { align: 'center' });
-      doc.text(`Cierre: ${new Date().toLocaleString()}`, { align: 'center' });
-      doc.moveDown();
-
-      doc.fontSize(12).text('Resumen de ventas:', { underline: true });
-      doc.text(`Fondo inicial: $${turno.fondo_inicial.toFixed(2)} MXN`);
-      doc.text(`Ventas en efectivo: $${ventasEfectivo.toFixed(2)} MXN`);
-      doc.text(`Ventas con tarjeta: $${ventasTarjeta.toFixed(2)} MXN`);
-      doc.text(`Ventas por transferencia: $${ventasTransferencia.toFixed(2)} MXN`);
-      doc.text(`Ventas en dólares: $${ventasDolaresUSD.toFixed(2)} USD (equivalente a $${ventasDolaresMXN.toFixed(2)} MXN)`);
-      doc.moveDown();
-      doc.text(`TOTAL VENDIDO EN MXN: $${totalVendidoMXN.toFixed(2)}`, { bold: true });
-      doc.moveDown();
-      doc.fontSize(14).text(`EFECTIVO EN CAJA (MXN): $${efectivoEnCajaMXN.toFixed(2)}`, { bold: true });
-      doc.text(`EFECTIVO EN CAJA (USD): $${ventasDolaresUSD.toFixed(2)}`, { bold: true });
-      doc.moveDown();
-      doc.fontSize(8).text('Gracias por usar Matti\'s BBQ System', { align: 'center' });
-
-      doc.end();
-
-      // Actualizar el turno como cerrado
-      db.run(`
-        UPDATE cash_register SET estado = 'cerrada', fecha_cierre = datetime('now', 'localtime'), fondo_final = ?
-        WHERE id = ?
-      `, [efectivoEnCajaMXN, turno.id], (err) => {
-        if (err) console.error('Error al cerrar turno:', err);
-      });
-    });
-  });
-});
-
-// Servir frontend
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'caja.html')));
-app.get('/cocina.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'cocina.html')));
-app.get('/pending-payment.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'pending-payment.html')));
-
-// WebSocket
-io.on('connection', (socket) => console.log('📱 Cliente conectado:', socket.id));
-
-const PORT = process.env.PORT || 3000;
-const getLocalIp = () => {
-  const { networkInterfaces } = require('os');
-  for (const name of Object.keys(networkInterfaces()))
-    for (const net of networkInterfaces()[name])
-      if (net.family === 'IPv4' && !net.internal) return net.address;
-  return 'localhost';
-};
-
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🔥 Servidor en http://${getLocalIp()}:${PORT}`);
-});
-
-// ==================== RESPALDO DE BASE DE DATOS ====================
-// Información de la base de datos
-app.get('/admin/backup-info', (req, res) => {
-    try {
-        const fs = require('fs');
-        const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'database.sqlite');
-        const stats = fs.statSync(dbPath);
-        res.json({
-            size: stats.size,
-            size_mb: (stats.size / 1024 / 1024).toFixed(2),
-            modified: stats.mtime,
-            db_path: dbPath
-        });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Descargar respaldo
-app.get('/admin/backup', (req, res) => {
-    try {
-        const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'database.sqlite');
-        const fecha = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
-        const nombreArchivo = `respaldo_mattis_${fecha}.sqlite`;
-        res.download(dbPath, nombreArchivo);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Restaurar respaldo
-const multer = require('multer');
-const upload = multer({ dest: 'uploads/' });
-
-app.post('/admin/restore', upload.single('backup'), (req, res) => {
-    try {
-        const fs = require('fs');
-        const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'database.sqlite');
-        
-        if (!req.file) {
-            return res.json({ success: false, message: 'No se recibió ningún archivo' });
-        }
-        
-        // Verificar que sea un archivo .sqlite válido
-        const fileBuffer = fs.readFileSync(req.file.path);
-        if (!fileBuffer.slice(0, 15).toString().includes('SQLite')) {
-            fs.unlinkSync(req.file.path);
-            return res.json({ success: false, message: 'El archivo no es una base de datos SQLite válida' });
-        }
-        
-        // Hacer respaldo automático antes de restaurar
-        const backupPath = `${dbPath}.backup_${Date.now()}`;
-        fs.copyFileSync(dbPath, backupPath);
-        
-        // Restaurar el respaldo
-        fs.copyFileSync(req.file.path, dbPath);
-        
-        // Limpiar archivo temporal
-        fs.unlinkSync(req.file.path);
-        
-        res.json({ success: true, message: 'Base de datos restaurada correctamente' });
-    } catch (err) {
-        console.error('Error al restaurar:', err);
-        res.json({ success: false, message: err.message });
-    }
-});
-
-// ==================== CAJA REGISTRADORA ====================
-let drawerPort = null;
-let drawerConnected = false;
-
-// Intentar conectar a la caja automáticamente al iniciar
-function initDrawer() {
-    try {
-        const { SerialPort } = require('serialport');
-        
-        // Lista de puertos comunes a probar
-        const ports = ['COM1', 'COM2', 'COM3', 'COM4', 'COM5', '/dev/ttyUSB0', '/dev/ttyS0'];
-        
-        // Probar cada puerto
-        for (const portPath of ports) {
-            try {
-                console.log(`🔍 Probando puerto: ${portPath}...`);
-                const testPort = new SerialPort({
-                    path: portPath,
-                    baudRate: 9600,
-                    dataBits: 8,
-                    parity: 'none',
-                    stopBits: 1,
-                    autoOpen: false
-                });
-                
-                testPort.open((err) => {
-                    if (!err) {
-                        console.log(`✅ Caja registradora encontrada en: ${portPath}`);
-                        drawerPort = testPort;
-                        drawerConnected = true;
-                        drawerPort.on('error', (e) => console.log('⚠️ Error en caja:', e.message));
-                    } else {
-                        console.log(`❌ Puerto ${portPath} no disponible:`, err.message);
-                    }
-                });
-                
-                // Si ya encontramos la caja, salimos del bucle
-                if (drawerConnected) break;
-                
-            } catch (e) {
-                console.log(`⚠️ Error probando ${portPath}:`, e.message);
-            }
-        }
-        
-        if (!drawerConnected) {
-            console.log('⚠️ No se encontró caja registradora en ningún puerto.');
-            console.log('💡 En Windows usa COM3 o COM4 (verifica en Administrador de dispositivos)');
-            console.log('💡 En Linux usa /dev/ttyUSB0');
-        }
-        
-    } catch (error) {
-        console.log('⚠️ No se pudo cargar serialport:', error.message);
-        console.log('💡 Ejecuta: npm install serialport');
-    }
-}
-
-// Inicializar al iniciar
-initDrawer();
-
-// Abrir caja registradora
-function abrirCajaRegistradora() {
-    if (!drawerConnected || !drawerPort) {
-        console.log('⚠️ Caja no conectada. Intentando reconectar...');
-        initDrawer();
-        if (!drawerConnected) {
-            console.log('❌ No se pudo conectar a la caja');
-            return false;
-        }
-    }
-    
-    try {
-        // Comando estándar ESC/POS para abrir cajón
-        // ESC p 0 25 250
-        const comando = Buffer.from([0x1B, 0x70, 0x00, 0x19, 0xFA]);
-        drawerPort.write(comando);
-        console.log('💰 Caja registradora abierta');
-        return true;
-    } catch (error) {
-        console.error('❌ Error abriendo caja:', error.message);
-        drawerConnected = false;
-        drawerPort = null;
-        return false;
-    }
-}
-
-// Endpoint para abrir caja
-app.post('/api/cash/drawer/open', (req, res) => {
-    console.log('📨 Solicitud de apertura de caja');
-    const success = abrirCajaRegistradora();
-    res.json({ 
-        success: success, 
-        message: success ? 'Caja abierta' : 'No se pudo abrir la caja',
-        connected: drawerConnected
-    });
-});
-
-// Endpoint para ver estado de la caja
-app.get('/api/cash/drawer/status', (req, res) => {
-    res.json({ 
-        connected: drawerConnected,
-        port: drawerPort ? drawerPort.path : 'no conectado'
-    });
-});
-
-// ==================== ADMINISTRACIÓN ====================
-
-// Dashboard - Muestra TODAS las ventas pagadas
-app.get('/api/admin/dashboard', (req, res) => {
-    // Total de ventas pagadas (todas)
-    db.get("SELECT COUNT(*) as count FROM orders WHERE estado = 'pagado'", (err, totalVentas) => {
-        if (err) return res.status(500).json({ error: err.message });
-        
-        db.get("SELECT SUM(total) as total FROM orders WHERE estado = 'pagado'", (err, totalMonto) => {
-            if (err) return res.status(500).json({ error: err.message });
-            
-            db.get("SELECT COUNT(*) as count FROM products WHERE activo = 1", (err, totalProductos) => {
-                if (err) return res.status(500).json({ error: err.message });
-                
-                db.get("SELECT COUNT(*) as count FROM orders WHERE estado = 'pagado'", (err, totalPedidos) => {
-                    if (err) return res.status(500).json({ error: err.message });
-                    
-                    db.all("SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders WHERE estado = 'pagado' GROUP BY metodo_pago", (err, ventasPorMetodo) => {
-                        if (err) return res.status(500).json({ error: err.message });
-                        
-                        console.log('📊 Dashboard (Todas las ventas):', {
-                            totalVentas: totalVentas?.count || 0,
-                            totalMonto: totalMonto?.total || 0,
-                            totalProductos: totalProductos?.count || 0,
-                            totalPedidos: totalPedidos?.count || 0,
-                            ventasPorMetodo: ventasPorMetodo || []
-                        });
-                        
-                        res.json({
-                            totalVentas: totalVentas?.count || 0,
-                            totalMonto: totalMonto?.total || 0,
-                            totalProductos: totalProductos?.count || 0,
-                            totalPedidos: totalPedidos?.count || 0,
-                            ventasPorMetodo: ventasPorMetodo || []
-                        });
-                    });
-                });
-            });
-        });
-    });
-});
-
-// Ventas por período (día, semana, mes)
-app.get('/api/admin/sales/:periodo', (req, res) => {
-    const { periodo } = req.params;
-    let where = '';
-    let periodoText = '';
-    
-    // Filtro por fecha según el período seleccionado
-    switch(periodo) {
-        case 'dia':
-            where = "WHERE date(created_at) = date('now', 'localtime') AND estado = 'pagado'";
-            periodoText = 'Hoy';
-            break;
-        case 'semana':
-            where = "WHERE date(created_at) >= date('now', 'localtime', '-7 days') AND estado = 'pagado'";
-            periodoText = 'Última semana';
-            break;
-        case 'mes':
-            where = "WHERE date(created_at) >= date('now', 'localtime', '-30 days') AND estado = 'pagado'";
-            periodoText = 'Último mes';
-            break;
-        default:
-            return res.status(400).json({ error: 'Período no válido' });
-    }
-    
-    // Total ventas del período
-    db.get(`SELECT COUNT(*) as count FROM orders ${where}`, (err, totalVentas) => {
-        if (err) return res.status(500).json({ error: err.message });
-        
-        db.get(`SELECT SUM(total) as total FROM orders ${where}`, (err, totalMonto) => {
-            if (err) return res.status(500).json({ error: err.message });
-            
-            db.all(`SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders ${where} GROUP BY metodo_pago`, (err, porMetodo) => {
-                if (err) return res.status(500).json({ error: err.message });
-                
-                db.all(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT 50`, (err, ultimasVentas) => {
-                    if (err) return res.status(500).json({ error: err.message });
-                    
-                    const porMetodoArray = Array.isArray(porMetodo) ? porMetodo : [];
-                    const ultimasVentasArray = Array.isArray(ultimasVentas) ? ultimasVentas : [];
-                    
-                    console.log(`📊 Ventas ${periodoText}:`, {
-                        totalVentas: totalVentas?.count || 0,
-                        totalMonto: totalMonto?.total || 0,
-                        porMetodo: porMetodoArray,
-                        ultimasVentas: ultimasVentasArray
-                    });
-                    
-                    res.json({
-                        periodo: periodoText,
-                        totalVentas: totalVentas?.count || 0,
-                        totalMonto: totalMonto?.total || 0,
-                        porMetodo: porMetodoArray,
-                        ultimasVentas: ultimasVentasArray
-                    });
-                });
-            });
-        });
-    });
-});
-
-// ==================== CONSULTAS SQL ====================
-// Ejecutar consultas SQL personalizadas (solo SELECT)
-app.post('/api/query', (req, res) => {
-    const { sql } = req.body;
-    
-    if (!sql) {
-        return res.status(400).json({ error: 'No se proporcionó consulta SQL' });
-    }
-    
-    // Validar que sea solo SELECT
-    const sqlTrim = sql.trim().toLowerCase();
-    if (!sqlTrim.startsWith('select')) {
-        return res.status(403).json({ error: 'Solo se permiten consultas SELECT' });
-    }
-    
-    // Validar que no tenga comandos peligrosos
-    const forbidden = ['drop', 'delete', 'update', 'insert', 'alter', 'create', 'truncate', 'pragma'];
-    for (const word of forbidden) {
-        if (sqlTrim.includes(word)) {
-            return res.status(403).json({ error: `Comando no permitido: ${word}` });
-        }
-    }
-    
-    console.log('📝 Consulta SQL ejecutada:', sql);
-    
-    db.all(sql, (err, rows) => {
-        if (err) {
-            console.error('❌ Error en consulta:', err);
-            return res.status(500).json({ error: err.message });
-        }
-        
-        // Obtener nombres de columnas
-        const columns = rows && rows.length > 0 ? Object.keys(rows[0]) : [];
-        
-        res.json({
-            success: true,
-            columns: columns,
-            rows: rows || [],
-            count: rows ? rows.length : 0
-        });
-    });
-});
-
 // ==================== ELIMINAR ORDEN ====================
 app.delete('/api/orders/:id', (req, res) => {
     const { id } = req.params;
@@ -734,6 +275,389 @@ app.delete('/api/orders/:id', (req, res) => {
                     order: order
                 });
             });
+        });
+    });
+});
+
+// ==================== CAJA ====================
+app.post('/api/cash/open', (req, res) => {
+  const { fondo_inicial, usuario, tipo_cambio_usd } = req.body;
+  db.run(
+    `INSERT INTO cash_register (fecha_apertura, fondo_inicial, usuario, estado, tipo_cambio_usd)
+     VALUES (datetime('now', 'localtime'), ?, ?, 'abierta', ?)`,
+    [fondo_inicial, usuario || 'Admin', tipo_cambio_usd || 17.00],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ success: true, id: this.lastID });
+    }
+  );
+});
+
+app.get('/api/cash/status', (req, res) => {
+  db.get(`SELECT * FROM cash_register WHERE estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1`, (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(row || { estado: 'cerrada' });
+  });
+});
+
+const PDFDocument = require('pdfkit');
+const fs = require('fs');
+
+app.post('/api/cash/close', (req, res) => {
+  db.get(`SELECT * FROM cash_register WHERE estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1`, (err, turno) => {
+    if (err || !turno) {
+      return res.status(400).json({ error: 'No hay turno abierto' });
+    }
+
+    db.all(`
+      SELECT metodo_pago, SUM(total) as total_mxn, SUM(total_usd) as total_usd
+      FROM orders 
+      WHERE created_at >= ? AND estado = 'pagado'
+      GROUP BY metodo_pago
+    `, [turno.fecha_apertura], (err, ventasPorMetodo) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      let ventasEfectivo = 0, ventasTarjeta = 0, ventasTransferencia = 0, ventasDolaresMXN = 0, ventasDolaresUSD = 0;
+      ventasPorMetodo.forEach(v => {
+        if (v.metodo_pago === 'Efectivo') ventasEfectivo = v.total_mxn || 0;
+        else if (v.metodo_pago === 'Tarjeta') ventasTarjeta = v.total_mxn || 0;
+        else if (v.metodo_pago === 'Transferencia') ventasTransferencia = v.total_mxn || 0;
+        else if (v.metodo_pago === 'Dólares') {
+          ventasDolaresMXN = v.total_mxn || 0;
+          ventasDolaresUSD = v.total_usd || 0;
+        }
+      });
+      const totalVendidoMXN = ventasEfectivo + ventasTarjeta + ventasTransferencia + ventasDolaresMXN;
+      const efectivoEnCajaMXN = turno.fondo_inicial + ventasEfectivo;
+
+      const datosCierre = {
+        fondoInicial: turno.fondo_inicial,
+        ventasEfectivo: ventasEfectivo,
+        ventasTarjeta: ventasTarjeta,
+        ventasTransferencia: ventasTransferencia,
+        ventasDolaresUSD: ventasDolaresUSD,
+        ventasDolaresMXN: ventasDolaresMXN,
+        totalVendidoMXN: totalVendidoMXN,
+        efectivoEnCajaMXN: efectivoEnCajaMXN,
+        fechaApertura: turno.fecha_apertura,
+        fechaCierre: new Date().toISOString()
+      };
+
+      const doc = new PDFDocument({ margin: 50 });
+      const buffers = [];
+      doc.on('data', buffers.push.bind(buffers));
+      doc.on('end', () => {
+        const pdfData = Buffer.concat(buffers);
+        res.json({
+          success: true,
+          pdf: pdfData.toString('base64'),
+          cierre: datosCierre
+        });
+      });
+
+      doc.fontSize(20).text('MATTI\'S B-B-Q', { align: 'center' });
+      doc.moveDown();
+      doc.fontSize(16).text('REPORTE DE CIERRE DE CAJA', { align: 'center' });
+      doc.moveDown();
+      doc.fontSize(10).text(`Apertura: ${new Date(turno.fecha_apertura).toLocaleString()}`, { align: 'center' });
+      doc.text(`Cierre: ${new Date().toLocaleString()}`, { align: 'center' });
+      doc.moveDown();
+
+      doc.fontSize(12).text('Resumen de ventas:', { underline: true });
+      doc.text(`Fondo inicial: $${turno.fondo_inicial.toFixed(2)} MXN`);
+      doc.text(`Ventas en efectivo: $${ventasEfectivo.toFixed(2)} MXN`);
+      doc.text(`Ventas con tarjeta: $${ventasTarjeta.toFixed(2)} MXN`);
+      doc.text(`Ventas por transferencia: $${ventasTransferencia.toFixed(2)} MXN`);
+      doc.text(`Ventas en dólares: $${ventasDolaresUSD.toFixed(2)} USD (equivalente a $${ventasDolaresMXN.toFixed(2)} MXN)`);
+      doc.moveDown();
+      doc.text(`TOTAL VENDIDO EN MXN: $${totalVendidoMXN.toFixed(2)}`, { bold: true });
+      doc.moveDown();
+      doc.fontSize(14).text(`EFECTIVO EN CAJA (MXN): $${efectivoEnCajaMXN.toFixed(2)}`, { bold: true });
+      doc.text(`EFECTIVO EN CAJA (USD): $${ventasDolaresUSD.toFixed(2)}`, { bold: true });
+      doc.moveDown();
+      doc.fontSize(8).text('Gracias por usar Matti\'s BBQ System', { align: 'center' });
+
+      doc.end();
+
+      db.run(`
+        UPDATE cash_register SET estado = 'cerrada', fecha_cierre = datetime('now', 'localtime'), fondo_final = ?
+        WHERE id = ?
+      `, [efectivoEnCajaMXN, turno.id], (err) => {
+        if (err) console.error('Error al cerrar turno:', err);
+      });
+    });
+  });
+});
+
+// Servir frontend
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'caja.html')));
+app.get('/cocina.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'cocina.html')));
+app.get('/pending-payment.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'pending-payment.html')));
+app.get('/stock.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'stock.html')));
+app.get('/admin.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get('/consultas.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'consultas.html')));
+
+// WebSocket
+io.on('connection', (socket) => console.log('📱 Cliente conectado:', socket.id));
+
+const PORT = process.env.PORT || 3000;
+const getLocalIp = () => {
+  const { networkInterfaces } = require('os');
+  for (const name of Object.keys(networkInterfaces()))
+    for (const net of networkInterfaces()[name])
+      if (net.family === 'IPv4' && !net.internal) return net.address;
+  return 'localhost';
+};
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`🔥 Servidor en http://${getLocalIp()}:${PORT}`);
+});
+
+// ==================== RESPALDO DE BASE DE DATOS ====================
+app.get('/admin/backup-info', (req, res) => {
+    try {
+        const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'database.sqlite');
+        const stats = fs.statSync(dbPath);
+        res.json({
+            size: stats.size,
+            size_mb: (stats.size / 1024 / 1024).toFixed(2),
+            modified: stats.mtime,
+            db_path: dbPath
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/admin/backup', (req, res) => {
+    try {
+        const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'database.sqlite');
+        const fecha = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
+        const nombreArchivo = `respaldo_mattis_${fecha}.sqlite`;
+        res.download(dbPath, nombreArchivo);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+const multer = require('multer');
+const upload = multer({ dest: 'uploads/' });
+
+app.post('/admin/restore', upload.single('backup'), (req, res) => {
+    try {
+        const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'database.sqlite');
+        
+        if (!req.file) {
+            return res.json({ success: false, message: 'No se recibió ningún archivo' });
+        }
+        
+        const fileBuffer = fs.readFileSync(req.file.path);
+        if (!fileBuffer.slice(0, 15).toString().includes('SQLite')) {
+            fs.unlinkSync(req.file.path);
+            return res.json({ success: false, message: 'El archivo no es una base de datos SQLite válida' });
+        }
+        
+        const backupPath = `${dbPath}.backup_${Date.now()}`;
+        fs.copyFileSync(dbPath, backupPath);
+        fs.copyFileSync(req.file.path, dbPath);
+        fs.unlinkSync(req.file.path);
+        
+        res.json({ success: true, message: 'Base de datos restaurada correctamente' });
+    } catch (err) {
+        console.error('Error al restaurar:', err);
+        res.json({ success: false, message: err.message });
+    }
+});
+
+// ==================== CAJA REGISTRADORA ====================
+let drawerPort = null;
+let drawerConnected = false;
+
+function initDrawer() {
+    try {
+        const { SerialPort } = require('serialport');
+        const ports = ['COM1', 'COM2', 'COM3', 'COM4', 'COM5', '/dev/ttyUSB0', '/dev/ttyS0'];
+        
+        for (const portPath of ports) {
+            try {
+                const testPort = new SerialPort({
+                    path: portPath,
+                    baudRate: 9600,
+                    dataBits: 8,
+                    parity: 'none',
+                    stopBits: 1,
+                    autoOpen: false
+                });
+                
+                testPort.open((err) => {
+                    if (!err) {
+                        console.log(`✅ Caja registradora encontrada en: ${portPath}`);
+                        drawerPort = testPort;
+                        drawerConnected = true;
+                        drawerPort.on('error', (e) => console.log('⚠️ Error en caja:', e.message));
+                    }
+                });
+                
+                if (drawerConnected) break;
+            } catch (e) {
+                console.log(`⚠️ Error probando ${portPath}:`, e.message);
+            }
+        }
+        
+        if (!drawerConnected) {
+            console.log('⚠️ No se encontró caja registradora en ningún puerto.');
+        }
+    } catch (error) {
+        console.log('⚠️ No se pudo cargar serialport:', error.message);
+    }
+}
+
+initDrawer();
+
+function abrirCajaRegistradora() {
+    if (!drawerConnected || !drawerPort) {
+        initDrawer();
+        if (!drawerConnected) return false;
+    }
+    
+    try {
+        const comando = Buffer.from([0x1B, 0x70, 0x00, 0x19, 0xFA]);
+        drawerPort.write(comando);
+        console.log('💰 Caja registradora abierta');
+        return true;
+    } catch (error) {
+        console.error('❌ Error abriendo caja:', error.message);
+        drawerConnected = false;
+        drawerPort = null;
+        return false;
+    }
+}
+
+app.post('/api/cash/drawer/open', (req, res) => {
+    const success = abrirCajaRegistradora();
+    res.json({ 
+        success: success, 
+        message: success ? 'Caja abierta' : 'No se pudo abrir la caja',
+        connected: drawerConnected
+    });
+});
+
+app.get('/api/cash/drawer/status', (req, res) => {
+    res.json({ 
+        connected: drawerConnected,
+        port: drawerPort ? drawerPort.path : 'no conectado'
+    });
+});
+
+// ==================== ADMINISTRACIÓN ====================
+app.get('/api/admin/dashboard', (req, res) => {
+    db.get("SELECT COUNT(*) as count FROM orders WHERE estado = 'pagado'", (err, totalVentas) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        db.get("SELECT SUM(total) as total FROM orders WHERE estado = 'pagado'", (err, totalMonto) => {
+            if (err) return res.status(500).json({ error: err.message });
+            
+            db.get("SELECT COUNT(*) as count FROM products WHERE activo = 1", (err, totalProductos) => {
+                if (err) return res.status(500).json({ error: err.message });
+                
+                db.all("SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders WHERE estado = 'pagado' GROUP BY metodo_pago", (err, ventasPorMetodo) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    
+                    res.json({
+                        totalVentas: totalVentas?.count || 0,
+                        totalMonto: totalMonto?.total || 0,
+                        totalProductos: totalProductos?.count || 0,
+                        totalPedidos: totalVentas?.count || 0,
+                        ventasPorMetodo: ventasPorMetodo || []
+                    });
+                });
+            });
+        });
+    });
+});
+
+app.get('/api/admin/sales/:periodo', (req, res) => {
+    const { periodo } = req.params;
+    let where = '';
+    let periodoText = '';
+    
+    switch(periodo) {
+        case 'dia':
+            where = "WHERE date(created_at) = date('now', 'localtime') AND estado = 'pagado'";
+            periodoText = 'Hoy';
+            break;
+        case 'semana':
+            where = "WHERE date(created_at) >= date('now', 'localtime', '-7 days') AND estado = 'pagado'";
+            periodoText = 'Última semana';
+            break;
+        case 'mes':
+            where = "WHERE date(created_at) >= date('now', 'localtime', '-30 days') AND estado = 'pagado'";
+            periodoText = 'Último mes';
+            break;
+        default:
+            return res.status(400).json({ error: 'Período no válido' });
+    }
+    
+    db.get(`SELECT COUNT(*) as count FROM orders ${where}`, (err, totalVentas) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        db.get(`SELECT SUM(total) as total FROM orders ${where}`, (err, totalMonto) => {
+            if (err) return res.status(500).json({ error: err.message });
+            
+            db.all(`SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders ${where} GROUP BY metodo_pago`, (err, porMetodo) => {
+                if (err) return res.status(500).json({ error: err.message });
+                
+                db.all(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT 50`, (err, ultimasVentas) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    
+                    res.json({
+                        periodo: periodoText,
+                        totalVentas: totalVentas?.count || 0,
+                        totalMonto: totalMonto?.total || 0,
+                        porMetodo: porMetodo || [],
+                        ultimasVentas: ultimasVentas || []
+                    });
+                });
+            });
+        });
+    });
+});
+
+// ==================== CONSULTAS SQL ====================
+app.post('/api/query', (req, res) => {
+    const { sql } = req.body;
+    
+    if (!sql) {
+        return res.status(400).json({ error: 'No se proporcionó consulta SQL' });
+    }
+    
+    const sqlTrim = sql.trim().toLowerCase();
+    if (!sqlTrim.startsWith('select')) {
+        return res.status(403).json({ error: 'Solo se permiten consultas SELECT' });
+    }
+    
+    const forbidden = ['drop', 'delete', 'update', 'insert', 'alter', 'create', 'truncate', 'pragma'];
+    for (const word of forbidden) {
+        if (sqlTrim.includes(word)) {
+            return res.status(403).json({ error: `Comando no permitido: ${word}` });
+        }
+    }
+    
+    console.log('📝 Consulta SQL ejecutada:', sql);
+    
+    db.all(sql, (err, rows) => {
+        if (err) {
+            console.error('❌ Error en consulta:', err);
+            return res.status(500).json({ error: err.message });
+        }
+        
+        const columns = rows && rows.length > 0 ? Object.keys(rows[0]) : [];
+        
+        res.json({
+            success: true,
+            columns: columns,
+            rows: rows || [],
+            count: rows ? rows.length : 0
         });
     });
 });
