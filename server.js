@@ -5,6 +5,24 @@ const cors = require('cors');
 const path = require('path');
 const db = require('./server/database_server/database.js');
 
+// ==================== INICIALIZAR TABLA DE PAGOS DIVIDIDOS ====================
+db.run(`
+    CREATE TABLE IF NOT EXISTS order_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL,
+        metodo_pago TEXT NOT NULL,
+        monto REAL NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    )
+`, (err) => {
+    if (err) {
+        console.error('❌ Error creando tabla order_payments:', err.message);
+    } else {
+        console.log('✅ Tabla order_payments lista');
+    }
+});
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, { cors: { origin: "*" } });
@@ -538,6 +556,26 @@ app.post('/api/cash/close-v2', (req, res) => {
                 res.json({ success: true, cierre: datosCierre });
             });
         });
+    });
+});
+
+// ==================== CREAR TABLA DE PAGOS (EMERGENCIA) ====================
+app.get('/api/init-order-payments', (req, res) => {
+    db.run(`
+        CREATE TABLE IF NOT EXISTS order_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL,
+            metodo_pago TEXT NOT NULL,
+            monto REAL NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+        )
+    `, (err) => {
+        if (err) {
+            console.error('Error:', err);
+            return res.json({ success: false, error: err.message });
+        }
+        res.json({ success: true, message: 'Tabla order_payments creada correctamente' });
     });
 });
 
