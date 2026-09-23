@@ -667,6 +667,8 @@ async function cargarCobrosPendientes() {
 
 function renderizarCobrosPendientes(orders) {
     const container = document.getElementById('ordenesCobroPendiente');
+    if (!container) return;
+    
     if (!orders || orders.length === 0) {
         container.innerHTML = '<div class="col-12 text-center text-muted p-5">No hay órdenes pendientes de cobro</div>';
         return;
@@ -682,9 +684,16 @@ function renderizarCobrosPendientes(orders) {
         return `
             <div class="col-md-6 col-lg-4">
                 <div class="order-item">
-                    <div class="d-flex justify-content-between">
+                    <div class="d-flex justify-content-between align-items-start">
                         <strong>${escapeHtml(order.cliente)}</strong>
-                        <span class="badge bg-warning">${order.estado}</span>
+                        <div>
+                            <span class="badge bg-warning">${order.estado}</span>
+                            <button class="btn btn-sm btn-danger ms-1" 
+                                onclick="eliminarOrdenPendiente(${order.id}, '${escapeHtml(order.order_number)}', '${escapeHtml(order.cliente)}')" 
+                                title="Eliminar orden">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
                     </div>
                     <small class="text-muted">Orden: ${order.order_number}</small>
                     <hr class="my-2">
@@ -744,3 +753,10 @@ socket.on('estado-actualizado', (data) => {
     const audio = document.getElementById('notificacion');
     audio.play().catch(e => console.log('Audio no permitido'));
 });
+
+// ========== EXPONER FUNCIONES GLOBALES ==========
+window.cargarCobrosPendientes = cargarCobrosPendientes;
+window.eliminarOrdenPendiente = eliminarOrdenPendiente;
+window.cargarOrdenYMostrarCobro = cargarOrdenYMostrarCobro;
+window.cargarOrdenesPendientesCobro = cargarOrdenesPendientesCobro;
+window.mostrarSeccion = mostrarSeccion;
