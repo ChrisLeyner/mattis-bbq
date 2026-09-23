@@ -69,7 +69,6 @@ app.put('/api/products/stock', (req, res) => {
 
 // ==================== ÓRDENES ====================
 // Crear orden (desde caja o cocina)
-// Crear orden (desde caja o cocina)
 app.post('/api/orders', (req, res) => {
   const { cliente, items, total, metodo_pago, tipo_orden = 'local', estado_inicial = 'pendiente', total_usd = 0 } = req.body;
   const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
@@ -634,6 +633,105 @@ app.get('/api/admin/sales/:periodo', (req, res) => {
                         porMetodo: porMetodoArray,
                         ultimasVentas: ultimasVentasArray
                     });
+                });
+            });
+        });
+    });
+});
+
+// ==================== CONSULTAS SQL ====================
+// Ejecutar consultas SQL personalizadas (solo SELECT)
+app.post('/api/query', (req, res) => {
+    const { sql } = req.body;
+    
+    if (!sql) {
+        return res.status(400).json({ error: 'No se proporcionó consulta SQL' });
+    }
+    
+    // Validar que sea solo SELECT
+    const sqlTrim = sql.trim().toLowerCase();
+    if (!sqlTrim.startsWith('select')) {
+        return res.status(403).json({ error: 'Solo se permiten consultas SELECT' });
+    }
+    
+    // Validar que no tenga comandos peligrosos
+    const forbidden = ['drop', 'delete', 'update', 'insert', 'alter', 'create', 'truncate', 'pragma'];
+    for (const word of forbidden) {
+        if (sqlTrim.includes(word)) {
+            return res.status(403).json({ error: `Comando no permitido: ${word}` });
+        }
+    }
+    
+    console.log('📝 Consulta SQL ejecutada:', sql);
+    
+    db.all(sql, (err, rows) => {
+        if (err) {
+            console.error('❌ Error en consulta:', err);
+            return res.status(500).json({ error: err.message });
+        }
+        
+        // Obtener nombres de columnas
+        const columns = rows && rows.length > 0 ? Object.keys(rows[0]) : [];
+        
+        res.json({
+            success: true,
+            columns: columns,
+            rows: rows || [],
+            count: rows ? rows.length : 0
+        });
+    });
+});
+
+// ==================== ELIMINAR ORDEN ====================
+app.delete('/api/orders/:id', (req, res) => {
+    const { id } = req.params;
+    console.log(`🗑️ Solicitud para eliminar orden ID: ${id}`);
+    
+    // Primero verificar que la orden existe
+    db.get('SELECT * FROM orders WHERE id = ?', [id], (err, order) => {
+        if (err) {
+            console.error('Error buscando orden:', err);
+            return res.status(500).json({ error: err.message });
+        }
+        if (!order) {
+            return res.status(404).json({ error: 'Orden no encontrada' });
+        }
+        
+        // No permitir eliminar órdenes ya pagadas
+        if (order.estado === 'pagado') {
+            return res.status(403).json({ 
+                error: 'No se puede eliminar una orden ya pagada',
+                orden: order
+            });
+        }
+        
+        // Eliminar items primero (por la foreign key)
+        db.run('DELETE FROM order_items WHERE order_id = ?', [id], (err) => {
+            if (err) {
+                console.error('Error eliminando items:', err);
+                return res.status(500).json({ error: err.message });
+            }
+            
+            // Eliminar la orden
+            db.run('DELETE FROM orders WHERE id = ?', [id], function(err) {
+                if (err) {
+                    console.error('Error eliminando orden:', err);
+                    return res.status(500).json({ error: err.message });
+                }
+                
+                console.log(`✅ Orden ${id} eliminada correctamente`);
+                
+                // Notificar a todos los clientes conectados
+                io.emit('orden-eliminada', { 
+                    orderId: id, 
+                    order_number: order.order_number,
+                    cliente: order.cliente 
+                });
+                
+                res.json({ 
+                    success: true, 
+                    message: `Orden ${order.order_number} eliminada correctamente`,
+                    order: order
                 });
             });
         });

@@ -402,24 +402,31 @@ async function cargarOrdenesPendientesCobro() {
     } catch (error) { console.error('Error:', error); }
 }
 
-function renderizarOrdenesPendientes(orders) {
-    const container = document.getElementById('ordenesPendientes');
+function renderizarCobrosPendientes(orders) {
+    const container = document.getElementById('ordenesCobroPendiente');
     if (!orders || orders.length === 0) {
         container.innerHTML = '<div class="col-12 text-center text-muted p-5">No hay órdenes pendientes de cobro</div>';
         return;
     }
+    
     container.innerHTML = orders.map(order => {
         let items = [];
         try { items = JSON.parse(order.items || '[]'); } catch(e) {}
-        const esParaLlevar = order.tipo_orden === 'llevar';
-        const badgeColor = esParaLlevar ? 'bg-info' : 'bg-warning';
-        const badgeText = esParaLlevar ? 'Para llevar' : 'Local - Entregado';
+        items.forEach(item => {
+            item.precio_unitario = item.precio_unitario || (item.subtotal / item.cantidad) || 0;
+        });
+        const total = order.total || 0;
         return `
             <div class="col-md-6 col-lg-4">
-                <div class="order-item ${ordenSeleccionada === order.id ? 'selected' : ''}" onclick="seleccionarOrdenParaCobro(${order.id})">
+                <div class="order-item">
                     <div class="d-flex justify-content-between">
                         <strong>${escapeHtml(order.cliente)}</strong>
-                        <span class="badge ${badgeColor}">${badgeText}</span>
+                        <div>
+                            <span class="badge bg-warning">${order.estado}</span>
+                            <button class="btn btn-sm btn-danger ms-1" onclick="eliminarOrdenPendiente(${order.id}, '${order.order_number}', '${escapeHtml(order.cliente)}')" title="Eliminar orden">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
                     </div>
                     <small class="text-muted">Orden: ${order.order_number}</small>
                     <hr class="my-2">
@@ -427,15 +434,64 @@ function renderizarOrdenesPendientes(orders) {
                         ${items.map(item => `<div>${item.cantidad}x ${escapeHtml(item.nombre)}</div>`).join('')}
                     </div>
                     <hr class="my-2">
-                    <div class="d-flex justify-content-between">
-                        <strong>Total: $${order.total?.toFixed(2)}</strong>
-                        <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); cargarOrdenAlCarrito(${order.id})">💰 COBRAR</button>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <strong>Total: $${total.toFixed(2)}</strong>
+                        <button class="btn btn-sm btn-success" onclick="cargarOrdenYMostrarCobro(${order.id}, '${escapeHtml(order.cliente)}', ${total})">
+                            💰 COBRAR
+                        </button>
                     </div>
                 </div>
             </div>
         `;
     }).join('');
 }
+
+// ==================== ELIMINAR ORDEN PENDIENTE ====================
+async function eliminarOrdenPendiente(orderId, orderNumber, cliente) {
+    const confirmar = confirm(
+        `⚠️ ¿ELIMINAR ORDEN?\n\n` +
+        `Orden: ${orderNumber}\n` +
+        `Cliente: ${cliente}\n\n` +
+        `Esta acción NO se puede deshacer.`
+    );
+    
+    if (!confirmar) return;
+    
+    const confirmar2 = confirm(`¿Estás COMPLETAMENTE seguro de eliminar la orden ${orderNumber}?`);
+    if (!confirmar2) return;
+    
+    try {
+        mostrarNotificacion('⏳ Eliminando orden...', 'info');
+        
+        const response = await fetch(`/api/orders/${orderId}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+            mostrarNotificacion(`✅ Orden ${orderNumber} eliminada`, 'success');
+            cargarCobrosPendientes();
+            
+            const audio = document.getElementById('notificacion');
+            audio.play().catch(() => {});
+        } else {
+            mostrarNotificacion('❌ Error: ' + (data.error || 'desconocido'), 'danger');
+        }
+    } catch (error) {
+        console.error('Error eliminando orden:', error);
+        mostrarNotificacion('❌ Error de conexión', 'danger');
+    }
+}
+
+// ==================== SOCKET - ESCUCHAR ORDEN ELIMINADA ====================
+socket.on('orden-eliminada', (data) => {
+    console.log('📨 Orden eliminada:', data);
+    if (document.getElementById('seccionCobrosPendientes')?.style.display === 'block') {
+        cargarCobrosPendientes();
+    }
+});
 
 function seleccionarOrdenParaCobro(orderId) {
     ordenSeleccionada = orderId;
