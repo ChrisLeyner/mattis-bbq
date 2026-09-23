@@ -97,7 +97,7 @@ async function cerrarTurno() {
 
     try {
         mostrarNotificacion('⏳ Cerrando turno...', 'info');
-        const response = await fetch('/api/cash/close', { method: 'POST' });
+        const response = await fetch('/api/cash/close-v2', { method: 'POST' });
         const data = await response.json();
 
         if (response.ok && data.success) {
@@ -753,6 +753,138 @@ socket.on('estado-actualizado', (data) => {
     const audio = document.getElementById('notificacion');
     audio.play().catch(e => console.log('Audio no permitido'));
 });
+
+// ========== DIVIDIR PAGO ==========
+let dividirModal = null;
+let totalDividir = 0;
+
+function abrirModalDividirPago() {
+    // Obtener total del carrito
+    totalDividir = carrito.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
+    
+    if (totalDividir <= 0) {
+        mostrarNotificacion('⚠️ El carrito está vacío', 'warning');
+        return;
+    }
+    
+    if (!ordenSeleccionada) {
+        const cliente = document.getElementById('cliente').value.trim();
+        if (!cliente) {
+            mostrarNotificacion('⚠️ Ingrese nombre del cliente primero', 'warning');
+            return;
+        }
+    }
+    
+    // Resetear campos
+    document.getElementById('pagoEfectivo').value = '';
+    document.getElementById('pagoTarjeta').value = '';
+    document.getElementById('pagoTransferencia').value = '';
+    document.getElementById('pagoDolares').value = '';
+    document.getElementById('dividirTotal').innerText = totalDividir.toFixed(2);
+    document.getElementById('tcDividir').innerText = tipoCambioUSD.toFixed(2);
+    
+    calcularFaltante();
+    
+    if (!dividirModal) {
+        dividirModal = new bootstrap.Modal(document.getElementById('modalDividirPago'));
+    }
+    dividirModal.show();
+}
+
+function calcularFaltante() {
+    const efectivo = parseFloat(document.getElementById('pagoEfectivo').value) || 0;
+    const tarjeta = parseFloat(document.getElementById('pagoTarjeta').value) || 0;
+    const transferencia = parseFloat(document.getElementById('pagoTransferencia').value) || 0;
+    const dolares = parseFloat(document.getElementById('pagoDolares').value) || 0;
+    const dolaresMXN = dolares * tipoCambioUSD;
+    
+    const totalIngresado = efectivo + tarjeta + transferencia + dolaresMXN;
+    const faltante = Math.max(0, totalDividir - totalIngresado);
+    const cambio = Math.max(0, totalIngresado - totalDividir);
+    
+    document.getElementById('totalIngresado').innerText = `$${totalIngresado.toFixed(2)}`;
+    document.getElementById('faltante').innerText = `$${faltante.toFixed(2)}`;
+    document.getElementById('cambioDividir').innerText = `$${cambio.toFixed(2)}`;
+    
+    // Habilitar botón de cobrar si no falta nada
+    document.getElementById('btnConfirmarDividir').disabled = faltante > 0.01;
+}
+
+async function confirmarPagoDividido() {
+    const efectivo = parseFloat(document.getElementById('pagoEfectivo').value) || 0;
+    const tarjeta = parseFloat(document.getElementById('pagoTarjeta').value) || 0;
+    const transferencia = parseFloat(document.getElementById('pagoTransferencia').value) || 0;
+    const dolares = parseFloat(document.getElementById('pagoDolares').value) || 0;
+    
+    const cliente = document.getElementById('cliente').value.trim();
+    
+    try {
+        document.getElementById('btnConfirmarDividir').disabled = true;
+        mostrarNotificacion('⏳ Procesando pago dividido...', 'info');
+        
+        let orderId = ordenSeleccionada;
+        
+        // Si es venta nueva, crear la orden primero
+        if (!orderId) {
+            const response = await fetch('/api/orders', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    cliente,
+                    items: carrito,
+                    total: totalDividir,
+                    metodo_pago: 'Dividido',
+                    tipo_orden: 'llevar',
+                    estado_inicial: 'pagado',
+                    total_usd: 0
+                })
+            });
+            const result = await response.json();
+            if (!result.success) throw new Error('Error creando orden');
+            orderId = result.order.id;
+        }
+        
+        // Registrar cada pago
+        const pagos = [];
+        if (efectivo > 0) pagos.push({ metodo_pago: 'Efectivo', monto: efectivo });
+        if (tarjeta > 0) pagos.push({ metodo_pago: 'Tarjeta', monto: tarjeta });
+        if (transferencia > 0) pagos.push({ metodo_pago: 'Transferencia', monto: transferencia });
+        if (dolares > 0) pagos.push({ metodo_pago: 'Dólares', monto: dolares, monto_mxn: dolares * tipoCambioUSD });
+        
+        for (const pago of pagos) {
+            await fetch(`/api/orders/${orderId}/payments`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(pago)
+            });
+        }
+        
+        // Marcar la orden como pagada
+        await fetch(`/api/orders/${orderId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ estado: 'pagado', metodo_pago: 'Dividido' })
+        });
+        
+        mostrarNotificacion('✅ Pago dividido registrado correctamente', 'success');
+        dividirModal.hide();
+        limpiarCarrito();
+        ordenSeleccionada = null;
+        window.ordenSeleccionada = null;
+        cargarProductos();
+        cargarOrdenesPendientesCobro();
+        
+    } catch (error) {
+        console.error('Error en pago dividido:', error);
+        mostrarNotificacion('❌ Error: ' + error.message, 'danger');
+        document.getElementById('btnConfirmarDividir').disabled = false;
+    }
+}
+
+// Exponer funciones
+window.abrirModalDividirPago = abrirModalDividirPago;
+window.calcularFaltante = calcularFaltante;
+window.confirmarPagoDividido = confirmarPagoDividido;
 
 // ========== EXPONER FUNCIONES GLOBALES ==========
 window.cargarCobrosPendientes = cargarCobrosPendientes;

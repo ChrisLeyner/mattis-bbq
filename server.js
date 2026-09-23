@@ -309,12 +309,12 @@ app.post('/api/cash/close', (req, res) => {
       return res.status(400).json({ error: 'No hay turno abierto' });
     }
 
-    db.all(`
-      SELECT metodo_pago, SUM(total) as total_mxn, SUM(total_usd) as total_usd
-      FROM orders 
-      WHERE created_at >= ? AND estado = 'pagado'
-      GROUP BY metodo_pago
-    `, [turno.fecha_apertura], (err, ventasPorMetodo) => {
+  db.all(`
+    SELECT metodo_pago, SUM(monto) as total_mxn, 0 as total_usd
+    FROM order_payments 
+    WHERE created_at >= ?
+    GROUP BY metodo_pago
+`, [turno.fecha_apertura], (err, ventasPorMetodo) => {
       if (err) return res.status(500).json({ error: err.message });
 
       let ventasEfectivo = 0, ventasTarjeta = 0, ventasTransferencia = 0, ventasDolaresMXN = 0, ventasDolaresUSD = 0;
@@ -408,6 +408,138 @@ const getLocalIp = () => {
       if (net.family === 'IPv4' && !net.internal) return net.address;
   return 'localhost';
 };
+
+// ==================== PAGOS DIVIDIDOS ====================
+// Registrar un pago (método + monto)
+app.post('/api/orders/:id/payments', (req, res) => {
+    const { id } = req.params;
+    const { metodo_pago, monto } = req.body;
+    
+    if (!metodo_pago || !monto || monto <= 0) {
+        return res.status(400).json({ error: 'Datos de pago inválidos' });
+    }
+    
+    // Verificar que la orden existe
+    db.get('SELECT * FROM orders WHERE id = ?', [id], (err, order) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!order) return res.status(404).json({ error: 'Orden no encontrada' });
+        
+        // Insertar el pago
+        db.run(
+            'INSERT INTO order_payments (order_id, metodo_pago, monto, created_at) VALUES (?, ?, ?, datetime("now", "localtime"))',
+            [id, metodo_pago, monto],
+            function(err) {
+                if (err) return res.status(500).json({ error: err.message });
+                
+                // Obtener total pagado hasta ahora
+                db.get('SELECT SUM(monto) as total_pagado FROM order_payments WHERE order_id = ?', [id], (err, result) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    
+                    const totalPagado = result.total_pagado || 0;
+                    
+                    // Actualizar el total_usd si es dólares
+                    if (metodo_pago === 'Dólares') {
+                        db.run('UPDATE orders SET total_usd = COALESCE(total_usd, 0) + ? WHERE id = ?', [monto, id]);
+                    }
+                    
+                    res.json({
+                        success: true,
+                        payment_id: this.lastID,
+                        total_pagado: totalPagado,
+                        falta: Math.max(0, order.total - totalPagado)
+                    });
+                });
+            }
+        );
+    });
+});
+
+// Obtener los pagos de una orden
+app.get('/api/orders/:id/payments', (req, res) => {
+    const { id } = req.params;
+    db.all('SELECT * FROM order_payments WHERE order_id = ? ORDER BY id ASC', [id], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+// Eliminar un pago (si se equivocó)
+app.delete('/api/orders/:id/payments/:paymentId', (req, res) => {
+    const { id, paymentId } = req.params;
+    db.run('DELETE FROM order_payments WHERE id = ? AND order_id = ?', [paymentId, id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+// ==================== CORTE DE CAJA ACTUALIZADO (CON PAGOS DIVIDIDOS) ====================
+// Reemplaza la sección de ventasPorMetodo en app.post('/api/cash/close') por esta versión:
+
+app.post('/api/cash/close-v2', (req, res) => {
+    db.get(`SELECT * FROM cash_register WHERE estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1`, (err, turno) => {
+        if (err || !turno) {
+            return res.status(400).json({ error: 'No hay turno abierto' });
+        }
+
+        // 🔥 CAMBIO: Obtener ventas de la tabla order_payments (desglose por método)
+        db.all(`
+            SELECT metodo_pago, SUM(monto) as total_mxn, COUNT(*) as cantidad
+            FROM order_payments 
+            WHERE created_at >= ?
+            GROUP BY metodo_pago
+        `, [turno.fecha_apertura], (err, ventasPorMetodo) => {
+            if (err) return res.status(500).json({ error: err.message });
+
+            // También sumar el total_usd de dólares
+            db.all(`
+                SELECT o.metodo_pago, SUM(o.total_usd) as total_usd
+                FROM orders o
+                WHERE o.created_at >= ? AND o.estado = 'pagado'
+                GROUP BY o.metodo_pago
+            `, [turno.fecha_apertura], (err, ventasUSD) => {
+                if (err) return res.status(500).json({ error: err.message });
+                
+                let ventasEfectivo = 0, ventasTarjeta = 0, ventasTransferencia = 0, ventasDolaresMXN = 0, ventasDolaresUSD = 0;
+                
+                ventasPorMetodo.forEach(v => {
+                    if (v.metodo_pago === 'Efectivo') ventasEfectivo = v.total_mxn || 0;
+                    else if (v.metodo_pago === 'Tarjeta') ventasTarjeta = v.total_mxn || 0;
+                    else if (v.metodo_pago === 'Transferencia') ventasTransferencia = v.total_mxn || 0;
+                    else if (v.metodo_pago === 'Dólares') ventasDolaresMXN = v.total_mxn || 0;
+                });
+                
+                // Obtener USD
+                ventasUSD.forEach(v => {
+                    if (v.metodo_pago === 'Dólares') ventasDolaresUSD = v.total_usd || 0;
+                });
+                
+                const totalVendidoMXN = ventasEfectivo + ventasTarjeta + ventasTransferencia + ventasDolaresMXN;
+                const efectivoEnCajaMXN = turno.fondo_inicial + ventasEfectivo;
+
+                const datosCierre = {
+                    fondoInicial: turno.fondo_inicial,
+                    ventasEfectivo: ventasEfectivo,
+                    ventasTarjeta: ventasTarjeta,
+                    ventasTransferencia: ventasTransferencia,
+                    ventasDolaresUSD: ventasDolaresUSD,
+                    ventasDolaresMXN: ventasDolaresMXN,
+                    totalVendidoMXN: totalVendidoMXN,
+                    efectivoEnCajaMXN: efectivoEnCajaMXN,
+                    fechaApertura: turno.fecha_apertura,
+                    fechaCierre: new Date().toISOString()
+                };
+                
+                // Cerrar el turno
+                db.run(`UPDATE cash_register SET estado = 'cerrada', fecha_cierre = datetime('now', 'localtime'), fondo_final = ? WHERE id = ?`, 
+                    [efectivoEnCajaMXN, turno.id], (err) => {
+                        if (err) console.error('Error al cerrar turno:', err);
+                    });
+                
+                res.json({ success: true, cierre: datosCierre });
+            });
+        });
+    });
+});
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🔥 Servidor en http://${getLocalIp()}:${PORT}`);
