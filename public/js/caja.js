@@ -97,7 +97,7 @@ async function cerrarTurno() {
 
     try {
         mostrarNotificacion('⏳ Cerrando turno...', 'info');
-        const response = await fetch('/api/cash/close-v2', { method: 'POST' });
+        const response = await fetch('/api/cash/close', { method: 'POST' });
         const data = await response.json();
 
         if (response.ok && data.success) {
@@ -400,6 +400,44 @@ async function cargarOrdenesPendientesCobro() {
         const orders = await response.json();
         renderizarOrdenesPendientes(orders);
     } catch (error) { console.error('Error:', error); }
+}
+
+function renderizarOrdenesPendientes(orders) {
+    const container = document.getElementById('ordenesPendientes');
+    if (!container) return;
+    
+    if (!orders || orders.length === 0) {
+        container.innerHTML = '<div class="col-12 text-center text-muted p-5">No hay órdenes pendientes de cobro</div>';
+        return;
+    }
+    
+    container.innerHTML = orders.map(order => {
+        let items = [];
+        try { items = JSON.parse(order.items || '[]'); } catch(e) {}
+        const esParaLlevar = order.tipo_orden === 'llevar';
+        const badgeColor = esParaLlevar ? 'bg-info' : 'bg-warning';
+        const badgeText = esParaLlevar ? 'Para llevar' : 'Local';
+        return `
+            <div class="col-md-6 col-lg-4">
+                <div class="order-item ${ordenSeleccionada === order.id ? 'selected' : ''}" onclick="seleccionarOrdenParaCobro(${order.id})">
+                    <div class="d-flex justify-content-between">
+                        <strong>${escapeHtml(order.cliente)}</strong>
+                        <span class="badge ${badgeColor}">${badgeText}</span>
+                    </div>
+                    <small class="text-muted">Orden: ${order.order_number}</small>
+                    <hr class="my-2">
+                    <div class="small">
+                        ${items.map(item => `<div>${item.cantidad}x ${escapeHtml(item.nombre)}</div>`).join('')}
+                    </div>
+                    <hr class="my-2">
+                    <div class="d-flex justify-content-between">
+                        <strong>Total: $${(order.total || 0).toFixed(2)}</strong>
+                        <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); cargarOrdenAlCarrito(${order.id})">💰 COBRAR</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
 }
 
 
