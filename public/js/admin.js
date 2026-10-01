@@ -498,3 +498,254 @@ document.addEventListener('DOMContentLoaded', () => {
         cargarHistorial();
     }
 });
+
+// ==================== CONSUMIBLES ====================
+let consumibleModal = null;
+let compraModal = null;
+let consumiblesList = [];
+
+async function cargarConsumibles() {
+    try {
+        const response = await fetch('/api/consumibles');
+        const consumibles = await response.json();
+        consumiblesList = consumibles;
+        
+        const container = document.getElementById('listaConsumibles');
+        if (!consumibles || consumibles.length === 0) {
+            container.innerHTML = '<div class="col-12 text-center text-muted p-5">No hay consumibles registrados. Agrega el primero.</div>';
+            return;
+        }
+        
+        container.innerHTML = consumibles.map(c => {
+            const alerta = c.stock_actual <= c.stock_minimo ? 'bg-danger text-white' : '';
+            const icono = c.stock_actual <= c.stock_minimo ? '⚠️' : '✅';
+            return `
+                <div class="col-md-6 col-lg-4 mb-2">
+                    <div class="card ${alerta}" style="border-radius: 10px;">
+                        <div class="card-body p-3">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <h6 class="mb-1">${icono} ${c.nombre}</h6>
+                                    <div class="small">
+                                        <strong>Stock: ${c.stock_actual}</strong> ${c.unidad}<br>
+                                        Mínimo: ${c.stock_minimo}
+                                    </div>
+                                </div>
+                                <div>
+                                    <button class="btn btn-sm btn-info" onclick="abrirCompra(${c.id})" title="Agregar stock">
+                                        <i class="fas fa-plus"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-primary" onclick="editarConsumible(${c.id})" title="Editar">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-danger" onclick="eliminarConsumible(${c.id})" title="Eliminar">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        // Cargar alertas
+        cargarAlertasConsumibles();
+        
+    } catch (error) {
+        console.error('Error cargando consumibles:', error);
+    }
+}
+
+async function cargarAlertasConsumibles() {
+    try {
+        const response = await fetch('/api/consumibles/alertas');
+        const alertas = await response.json();
+        const container = document.getElementById('alertasConsumibles');
+        
+        if (!alertas || alertas.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+        
+        container.innerHTML = `
+            <div class="alert alert-danger">
+                <h6><i class="fas fa-exclamation-triangle"></i> ⚠️ Consumibles con stock bajo (${alertas.length})</h6>
+                <ul class="mb-0">
+                    ${alertas.map(a => `<li><strong>${a.nombre}</strong>: ${a.stock_actual} ${a.unidad} (mínimo: ${a.stock_minimo})</li>`).join('')}
+                </ul>
+                <button class="btn btn-sm btn-warning mt-2" onclick="notificarWhatsAppAlertas()">
+                    <i class="fab fa-whatsapp"></i> Notificar por WhatsApp
+                </button>
+            </div>
+        `;
+    } catch (error) {
+        console.error('Error cargando alertas:', error);
+    }
+}
+
+function mostrarModalConsumible() {
+    document.getElementById('consumibleModalTitle').innerText = '➕ Agregar Consumible';
+    document.getElementById('editConsumibleId').value = '';
+    document.getElementById('editConsumibleNombre').value = '';
+    document.getElementById('editConsumibleUnidad').value = 'pieza';
+    document.getElementById('editConsumibleStock').value = '';
+    document.getElementById('editConsumibleMinimo').value = '10';
+    
+    if (!consumibleModal) {
+        consumibleModal = new bootstrap.Modal(document.getElementById('consumibleModal'));
+    }
+    consumibleModal.show();
+}
+
+function editarConsumible(id) {
+    const c = consumiblesList.find(x => x.id === id);
+    if (!c) return;
+    
+    document.getElementById('consumibleModalTitle').innerText = '✏️ Editar Consumible';
+    document.getElementById('editConsumibleId').value = c.id;
+    document.getElementById('editConsumibleNombre').value = c.nombre;
+    document.getElementById('editConsumibleUnidad').value = c.unidad || 'pieza';
+    document.getElementById('editConsumibleStock').value = c.stock_actual;
+    document.getElementById('editConsumibleMinimo').value = c.stock_minimo;
+    
+    if (!consumibleModal) {
+        consumibleModal = new bootstrap.Modal(document.getElementById('consumibleModal'));
+    }
+    consumibleModal.show();
+}
+
+async function guardarConsumible() {
+    const id = document.getElementById('editConsumibleId').value;
+    const nombre = document.getElementById('editConsumibleNombre').value.trim();
+    const unidad = document.getElementById('editConsumibleUnidad').value;
+    const stock_actual = parseInt(document.getElementById('editConsumibleStock').value) || 0;
+    const stock_minimo = parseInt(document.getElementById('editConsumibleMinimo').value) || 10;
+    
+    if (!nombre) {
+        mostrarNotificacion('⚠️ Ingresa el nombre', 'warning');
+        return;
+    }
+    
+    const url = id ? `/api/consumibles/${id}` : '/api/consumibles';
+    const method = id ? 'PUT' : 'POST';
+    
+    try {
+        const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nombre, unidad, stock_actual, stock_minimo })
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            mostrarNotificacion('✅ Consumible guardado', 'success');
+            consumibleModal.hide();
+            cargarConsumibles();
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        mostrarNotificacion('❌ Error al guardar', 'danger');
+    }
+}
+
+function abrirCompra(id) {
+    const c = consumiblesList.find(x => x.id === id);
+    if (!c) return;
+    
+    document.getElementById('compraConsumibleId').value = c.id;
+    document.getElementById('compraNombre').innerText = c.nombre;
+    document.getElementById('compraStockActual').innerText = `${c.stock_actual} ${c.unidad}`;
+    document.getElementById('compraCantidad').value = '';
+    
+    if (!compraModal) {
+        compraModal = new bootstrap.Modal(document.getElementById('compraModal'));
+    }
+    compraModal.show();
+}
+
+async function agregarStockConsumible() {
+    const id = document.getElementById('compraConsumibleId').value;
+    const cantidad = parseInt(document.getElementById('compraCantidad').value);
+    
+    if (!cantidad || cantidad <= 0) {
+        mostrarNotificacion('⚠️ Cantidad inválida', 'warning');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/consumibles/${id}/agregar-stock`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cantidad })
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            mostrarNotificacion(`✅ Stock actualizado (+${cantidad})`, 'success');
+            compraModal.hide();
+            cargarConsumibles();
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        mostrarNotificacion('❌ Error', 'danger');
+    }
+}
+
+async function eliminarConsumible(id) {
+    if (!confirm('¿Eliminar este consumible?')) return;
+    
+    try {
+        await fetch(`/api/consumibles/${id}`, { method: 'DELETE' });
+        mostrarNotificacion('✅ Consumible eliminado', 'success');
+        cargarConsumibles();
+    } catch (error) {
+        mostrarNotificacion('❌ Error', 'danger');
+    }
+}
+
+async function notificarWhatsAppAlertas() {
+    try {
+        const response = await fetch('/api/consumibles/alertas');
+        const alertas = await response.json();
+        
+        if (alertas.length === 0) {
+            mostrarNotificacion('✅ No hay alertas', 'success');
+            return;
+        }
+        
+        let mensaje = `⚠️ ALERTA DE CONSUMIBLES - Matti's BBQ\n\n`;
+        alertas.forEach(a => {
+            mensaje += `📦 ${a.nombre}: ${a.stock_actual} ${a.unidad} (mínimo: ${a.stock_minimo})\n`;
+        });
+        mensaje += `\n🕐 ${new Date().toLocaleString()}`;
+        
+        const res = await fetch('/api/test-whatsapp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mensaje })
+        });
+        
+        mostrarNotificacion('📱 Notificación enviada', 'success');
+    } catch (error) {
+        console.error('Error:', error);
+        mostrarNotificacion('❌ Error al enviar', 'danger');
+    }
+}
+
+// Cargar consumibles al iniciar (si ya está autenticado)
+document.addEventListener('DOMContentLoaded', () => {
+    if (sessionStorage.getItem('adminAuth') === 'true') {
+        setTimeout(cargarConsumibles, 1000);
+    }
+});
+
+// Exponer funciones
+window.cargarConsumibles = cargarConsumibles;
+window.mostrarModalConsumible = mostrarModalConsumible;
+window.editarConsumible = editarConsumible;
+window.guardarConsumible = guardarConsumible;
+window.abrirCompra = abrirCompra;
+window.agregarStockConsumible = agregarStockConsumible;
+window.eliminarConsumible = eliminarConsumible;
+window.notificarWhatsAppAlertas = notificarWhatsAppAlertas;

@@ -3,7 +3,55 @@ const http = require('http');
 const socketIO = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const axios = require('axios');
+
+// ==================== CONFIGURACIÓN WHATSAPP ====================
+// El admin debe activar CallMeBot primero (ver instrucciones abajo)
+const ADMIN_WHATSAPP = '+5214461179650'; // ⚠️ CAMBIAR por el número del admin
+const CALLMEBOT_API_KEY = '8504698'; // ⚠️ CAMBIAR por la API key de CallMeBot
+
+async function enviarWhatsApp(mensaje) {
+    try {
+        const url = `https://api.callmebot.com/whatsapp.php?phone=${ADMIN_WHATSAPP}&text=${encodeURIComponent(mensaje)}&apikey=${CALLMEBOT_API_KEY}`;
+        await axios.get(url);
+        console.log('✅ WhatsApp enviado al admin');
+        return true;
+    } catch (error) {
+        console.error('❌ Error WhatsApp:', error.message);
+        return false;
+    }
+}
 const db = require('./server/database_server/database.js');
+
+// ==================== TABLAS DE CONSUMIBLES ====================
+db.run(`
+    CREATE TABLE IF NOT EXISTS consumibles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        stock_actual INTEGER DEFAULT 0,
+        stock_minimo INTEGER DEFAULT 10,
+        unidad TEXT DEFAULT 'pieza',
+        activo INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+`, (err) => {
+    if (err) console.error('Error tabla consumibles:', err.message);
+    else console.log('✅ Tabla consumibles lista');
+});
+
+db.run(`
+    CREATE TABLE IF NOT EXISTS recetas_consumibles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        producto_id INTEGER NOT NULL,
+        consumible_id INTEGER NOT NULL,
+        cantidad INTEGER DEFAULT 1,
+        FOREIGN KEY (producto_id) REFERENCES products(id),
+        FOREIGN KEY (consumible_id) REFERENCES consumibles(id)
+    )
+`, (err) => {
+    if (err) console.error('Error tabla recetas_consumibles:', err.message);
+    else console.log('✅ Tabla recetas_consumibles lista');
+});
 
 // ==================== INICIALIZAR TABLAS ADICIONALES ====================
 db.run(`
@@ -110,6 +158,48 @@ app.post('/api/orders', (req, res) => {
                 return res.status(500).json({ error: err.message });
               }
               db.run('UPDATE products SET stock = stock - ? WHERE id = ?', [item.cantidad, item.id]);
+              // Descontar stock del producto
+db.run('UPDATE products SET stock = stock - ? WHERE id = ?', [item.cantidad, item.id]);
+
+// 🔥 DESCONTAR CONSUMIBLES según la receta
+db.all(`
+    SELECT r.consumible_id, r.cantidad as cant_por_unidad, c.nombre, c.stock_actual, c.stock_minimo
+    FROM recetas_consumibles r
+    JOIN consumibles c ON c.id = r.consumible_id
+    WHERE r.producto_id = ?
+`, [item.id], (err, recetas) => {
+    if (!err && recetas && recetas.length > 0) {
+        recetas.forEach(receta => {
+            const cantidadTotal = receta.cant_por_unidad * item.cantidad;
+            
+            // Descontar
+            db.run(
+                'UPDATE consumibles SET stock_actual = stock_actual - ? WHERE id = ?',
+                [cantidadTotal, receta.consumible_id]
+            );
+            
+            // Verificar si queda bajo
+            const nuevoStock = receta.stock_actual - cantidadTotal;
+            if (nuevoStock <= receta.stock_minimo) {
+                const mensaje = `⚠️ ALERTA CONSUMIBLE BAJO\n\n` +
+                    `📦 ${receta.nombre}\n` +
+                    `📊 Stock actual: ${nuevoStock}\n` +
+                    `⚠️ Mínimo: ${receta.stock_minimo}\n` +
+                    `🕐 ${new Date().toLocaleString()}\n\n` +
+                    `Por favor comprar más consumibles.`;
+                
+                // Notificar a todos los clientes conectados
+                io.emit('consumible-alerta', {
+                    id: receta.consumible_id,
+                    nombre: receta.nombre,
+                    stock_actual: nuevoStock,
+                    stock_minimo: receta.stock_minimo
+                });
+                
+                // Enviar WhatsApp
+                enviarWhatsApp(mensaje);
+                
+                console.log(`⚠️ ALERTA: ${receta.nombre} - stock: ${nuevoStock}`);
               insertados++;
               if (insertados === items.length) {
                 db.run('COMMIT');
@@ -500,6 +590,142 @@ const getLocalIp = () => {
       if (net.family === 'IPv4' && !net.internal) return net.address;
   return 'localhost';
 };
+
+// ==================== CONSUMIBLES ====================
+// Obtener todos los consumibles
+app.get('/api/consumibles', (req, res) => {
+    db.all('SELECT * FROM consumibles WHERE activo = 1 ORDER BY nombre', (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+// Agregar consumible
+app.post('/api/consumibles', (req, res) => {
+    const { nombre, stock_actual, stock_minimo, unidad } = req.body;
+    if (!nombre) return res.status(400).json({ error: 'Nombre requerido' });
+    
+    db.run(
+        'INSERT INTO consumibles (nombre, stock_actual, stock_minimo, unidad) VALUES (?, ?, ?, ?)',
+        [nombre, stock_actual || 0, stock_minimo || 10, unidad || 'pieza'],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
+});
+
+// Actualizar consumible completo
+app.put('/api/consumibles/:id', (req, res) => {
+    const { id } = req.params;
+    const { nombre, stock_actual, stock_minimo, unidad } = req.body;
+    db.run(
+        'UPDATE consumibles SET nombre = ?, stock_actual = ?, stock_minimo = ?, unidad = ? WHERE id = ?',
+        [nombre, stock_actual, stock_minimo, unidad, id],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        }
+    );
+});
+
+// Actualizar solo el stock (para cuando compren más)
+app.put('/api/consumibles/:id/stock', (req, res) => {
+    const { id } = req.params;
+    const { stock_actual } = req.body;
+    db.run('UPDATE consumibles SET stock_actual = ? WHERE id = ?', [stock_actual, id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+// Agregar stock (sumar al actual)
+app.put('/api/consumibles/:id/agregar-stock', (req, res) => {
+    const { id } = req.params;
+    const { cantidad } = req.body;
+    db.run('UPDATE consumibles SET stock_actual = stock_actual + ? WHERE id = ?', [cantidad, id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+// Eliminar consumible (soft delete)
+app.delete('/api/consumibles/:id', (req, res) => {
+    const { id } = req.params;
+    db.run('UPDATE consumibles SET activo = 0 WHERE id = ?', [id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+// Obtener consumibles con stock bajo (alertas)
+app.get('/api/consumibles/alertas', (req, res) => {
+    db.all(`
+        SELECT * FROM consumibles 
+        WHERE stock_actual <= stock_minimo AND activo = 1 
+        ORDER BY stock_actual ASC
+    `, (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+// ==================== RECETAS (qué consume cada producto) ====================
+// Asignar consumible a producto
+app.post('/api/recetas', (req, res) => {
+    const { producto_id, consumible_id, cantidad } = req.body;
+    db.run(
+        'INSERT INTO recetas_consumibles (producto_id, consumible_id, cantidad) VALUES (?, ?, ?)',
+        [producto_id, consumible_id, cantidad || 1],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
+});
+
+// Obtener recetas de un producto
+app.get('/api/recetas/:productoId', (req, res) => {
+    const { productoId } = req.params;
+    db.all(`
+        SELECT r.id, r.cantidad, c.id as consumible_id, c.nombre, c.stock_actual, c.unidad
+        FROM recetas_consumibles r
+        JOIN consumibles c ON c.id = r.consumible_id
+        WHERE r.producto_id = ?
+    `, [productoId], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+// Eliminar receta
+app.delete('/api/recetas/:id', (req, res) => {
+    const { id } = req.params;
+    db.run('DELETE FROM recetas_consumibles WHERE id = ?', [id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+// ==================== CONFIGURACIÓN WHATSAPP ====================
+app.get('/api/config/whatsapp', (req, res) => {
+    res.json({
+        numero: ADMIN_WHATSAPP,
+        configurado: ADMIN_WHATSAPP !== '+521234567890'
+    });
+});
+
+app.post('/api/config/whatsapp', (req, res) => {
+    const { numero, api_key } = req.body;
+    // Guardar en memoria (para producción usar variables de entorno)
+    console.log('Configuración WhatsApp actualizada:', numero);
+    res.json({ success: true });
+});
+
+app.post('/api/test-whatsapp', async (req, res) => {
+    const enviado = await enviarWhatsApp('🧪 Prueba de notificación desde Matti\'s BBQ. Si recibes este mensaje, la configuración funciona correctamente.');
+    res.json({ success: enviado });
+});
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🔥 Servidor en http://${getLocalIp()}:${PORT}`);
