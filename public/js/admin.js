@@ -101,20 +101,27 @@ async function cargarProductos() {
             container.innerHTML = '<div class="col-12 text-center text-muted p-5">No hay productos registrados</div>';
             return;
         }
-        container.innerHTML = products.map(p => `
-            <div class="col-12 col-md-6 col-lg-4">
-                <div class="product-item d-flex justify-content-between align-items-center">
-                    <div>
-                        <strong>${p.nombre}</strong>
-                        <div class="text-muted small">$${p.precio.toFixed(2)} | Stock: ${p.stock}</div>
-                    </div>
-                    <div>
-                        <button class="btn btn-sm btn-outline-primary" onclick="editarProducto(${p.id})"><i class="fas fa-edit"></i></button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="eliminarProducto(${p.id})"><i class="fas fa-trash"></i></button>
-                    </div>
-                </div>
+  container.innerHTML = products.map(p => `
+    <div class="col-12 col-md-6 col-lg-4">
+        <div class="product-item d-flex justify-content-between align-items-center">
+            <div>
+                <strong>${p.nombre}</strong>
+                <div class="text-muted small">$${p.precio.toFixed(2)} | Stock: ${p.stock}</div>
             </div>
-        `).join('');
+            <div>
+                <button class="btn btn-sm btn-outline-info" onclick="abrirReceta(${p.id}, '${p.nombre.replace(/'/g, "\\'")}')" title="Receta de consumibles">
+                    <i class="fas fa-utensils"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-primary" onclick="editarProducto(${p.id})" title="Editar producto">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-danger" onclick="eliminarProducto(${p.id})" title="Eliminar producto">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+`).join('');
     } catch (error) {
         console.error('Error cargando productos:', error);
     }
@@ -756,3 +763,120 @@ window.abrirCompra = abrirCompra;
 window.agregarStockConsumible = agregarStockConsumible;
 window.eliminarConsumible = eliminarConsumible;
 window.notificarWhatsAppAlertas = notificarWhatsAppAlertas;
+
+// ==================== RECETAS (CONSUMIBLES POR PRODUCTO) ====================
+let recetaModal = null;
+
+// Abrir modal de recetas para un producto
+async function abrirReceta(productoId, productoNombre) {
+    document.getElementById('recetaProductoId').value = productoId;
+    document.getElementById('recetaProductoNombre').innerText = productoNombre;
+    document.getElementById('recetaCantidad').value = 1;
+    
+    // Cargar consumibles disponibles en el select
+    await cargarSelectConsumibles();
+    
+    // Cargar receta actual
+    await cargarRecetaActual(productoId);
+    
+    if (!recetaModal) {
+        recetaModal = new bootstrap.Modal(document.getElementById('recetaModal'));
+    }
+    recetaModal.show();
+}
+
+// Cargar lista de consumibles en el select
+async function cargarSelectConsumibles() {
+    try {
+        const response = await fetch('/api/consumibles');
+        const consumibles = await response.json();
+        const select = document.getElementById('recetaConsumibleSelect');
+        
+        select.innerHTML = '<option value="">-- Seleccionar --</option>' +
+            consumibles.map(c => `<option value="${c.id}">${c.nombre} (${c.stock_actual} ${c.unidad})</option>`).join('');
+    } catch (error) {
+        console.error('Error cargando consumibles:', error);
+    }
+}
+
+// Cargar receta actual del producto
+async function cargarRecetaActual(productoId) {
+    try {
+        const response = await fetch(`/api/recetas/${productoId}`);
+        const recetas = await response.json();
+        const container = document.getElementById('recetaListaActual');
+        
+        if (!recetas || recetas.length === 0) {
+            container.innerHTML = '<div class="text-muted text-center p-3">Sin consumibles asignados</div>';
+            return;
+        }
+        
+        container.innerHTML = recetas.map(r => `
+            <div class="d-flex justify-content-between align-items-center border-bottom py-2">
+                <div>
+                    <strong>${r.nombre}</strong>
+                    <span class="badge bg-info ms-2">${r.cantidad} ${r.unidad} por venta</span>
+                </div>
+                <button class="btn btn-sm btn-outline-danger" onclick="eliminarReceta(${r.id}, ${productoId})">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Error cargando receta:', error);
+    }
+}
+
+// Agregar consumible a la receta
+async function agregarConsumibleAReceta() {
+    const productoId = document.getElementById('recetaProductoId').value;
+    const consumibleId = document.getElementById('recetaConsumibleSelect').value;
+    const cantidad = parseInt(document.getElementById('recetaCantidad').value) || 1;
+    
+    if (!consumibleId) {
+        mostrarNotificacion('⚠️ Selecciona un consumible', 'warning');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/recetas', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                producto_id: parseInt(productoId),
+                consumible_id: parseInt(consumibleId),
+                cantidad: cantidad
+            })
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            mostrarNotificacion('✅ Consumible agregado a la receta', 'success');
+            document.getElementById('recetaConsumibleSelect').value = '';
+            document.getElementById('recetaCantidad').value = 1;
+            cargarRecetaActual(productoId);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        mostrarNotificacion('❌ Error al agregar', 'danger');
+    }
+}
+
+// Eliminar consumible de la receta
+async function eliminarReceta(recetaId, productoId) {
+    if (!confirm('¿Quitar este consumible de la receta?')) return;
+    
+    try {
+        await fetch(`/api/recetas/${recetaId}`, { method: 'DELETE' });
+        mostrarNotificacion('✅ Consumible eliminado de la receta', 'success');
+        cargarRecetaActual(productoId);
+    } catch (error) {
+        console.error('Error:', error);
+        mostrarNotificacion('❌ Error', 'danger');
+    }
+}
+
+// Exponer funciones globales
+window.abrirReceta = abrirReceta;
+window.agregarConsumibleAReceta = agregarConsumibleAReceta;
+window.eliminarReceta = eliminarReceta;
