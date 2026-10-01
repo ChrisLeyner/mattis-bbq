@@ -7,8 +7,8 @@ const axios = require('axios');
 const db = require('./server/database_server/database.js');
 
 // ==================== CONFIGURACIÓN WHATSAPP ====================
-const ADMIN_WHATSAPP = '+521234567890'; // ⚠️ CAMBIAR
-const CALLMEBOT_API_KEY = 'XXXXX'; // ⚠️ CAMBIAR
+const ADMIN_WHATSAPP = '+5214461179650'; // ⚠️ CAMBIAR
+const CALLMEBOT_API_KEY = '8504698'; // ⚠️ CAMBIAR
 
 async function enviarWhatsApp(mensaje) {
     if (ADMIN_WHATSAPP === '+521234567890') {

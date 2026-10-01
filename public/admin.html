@@ -98,35 +98,36 @@
                 </div>
 
                 <!-- Productos -->
-                <div class="tab-pane fade" id="products" role="tabpanel">
-                    <div class="admin-card">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h5><i class="fas fa-boxes"></i> Gestión de Productos</h5>
-                            <button class="btn btn-success btn-sm" onclick="mostrarModalProducto()"><i class="fas fa-plus"></i> Agregar Producto</button>
-                        </div>
-                        <div id="productList" class="row">
-                            <div class="text-center p-5">Cargando productos...</div>
-                        </div>
-                        <!-- Consumibles -->
-                        <div class="tab-pane fade" id="consumibles" role="tabpanel">
-                            <div class="admin-card">
-                                <div class="d-flex justify-content-between align-items-center mb-3">
-                                    <h5><i class="fas fa-box-open"></i> Gestión de Consumibles</h5>
-                                    <button class="btn btn-success btn-sm" onclick="mostrarModalConsumible()">
-                                        <i class="fas fa-plus"></i> Agregar Consumible
-                                    </button>
-                                </div>
+<div class="tab-pane fade" id="products" role="tabpanel">
+    <div class="admin-card">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5><i class="fas fa-boxes"></i> Gestión de Productos</h5>
+            <button class="btn btn-success btn-sm" onclick="mostrarModalProducto()"><i class="fas fa-plus"></i> Agregar Producto</button>
+        </div>
+        <div id="productList" class="row">
+            <div class="text-center p-5">Cargando productos...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Consumibles (FUERA de productos) -->
+<div class="tab-pane fade" id="consumibles" role="tabpanel">
+    <div class="admin-card">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5><i class="fas fa-box-open"></i> Gestión de Consumibles</h5>
+            <button class="btn btn-success btn-sm" onclick="mostrarModalConsumible()">
+                <i class="fas fa-plus"></i> Agregar Consumible
+            </button>
+        </div>
         
-                         <!-- Alertas de stock bajo -->
-                                <div id="alertasConsumibles" class="mb-3"></div>
-        
-                                <div id="listaConsumibles" class="row">
-                                    <div class="text-center p-5">Cargando consumibles...</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        <!-- Alertas de stock bajo -->
+        <div id="alertasConsumibles" class="mb-3"></div>
+
+        <div id="listaConsumibles" class="row">
+            <div class="text-center p-5">Cargando consumibles...</div>
+        </div>
+    </div>
+</div>
 
                 <!-- Respaldos (integrado) -->
                 <div class="tab-pane fade" id="backup" role="tabpanel">

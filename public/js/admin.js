@@ -733,14 +733,21 @@ async function notificarWhatsAppAlertas() {
     }
 }
 
-// Cargar consumibles al iniciar (si ya está autenticado)
+// ==================== CARGAR AL CAMBIAR A TAB CONSUMIBLES ====================
 document.addEventListener('DOMContentLoaded', () => {
-    if (sessionStorage.getItem('adminAuth') === 'true') {
-        setTimeout(cargarConsumibles, 1000);
-    }
+    // Esperar a que el DOM esté listo
+    setTimeout(() => {
+        const consumiblesTab = document.getElementById('consumibles-tab');
+        if (consumiblesTab) {
+            consumiblesTab.addEventListener('shown.bs.tab', () => {
+                console.log('📦 Cargando consumibles...');
+                cargarConsumibles();
+            });
+        }
+    }, 500);
 });
 
-// Exponer funciones
+// Exponer funciones globales
 window.cargarConsumibles = cargarConsumibles;
 window.mostrarModalConsumible = mostrarModalConsumible;
 window.editarConsumible = editarConsumible;
