@@ -3,9 +3,30 @@ const http = require('http');
 const socketIO = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const axios = require('axios');
 const db = require('./server/database_server/database.js');
 
-// ==================== INICIALIZAR TABLAS ADICIONALES ====================
+// ==================== CONFIGURACIÓN WHATSAPP ====================
+const ADMIN_WHATSAPP = '+521234567890'; // ⚠️ CAMBIAR
+const CALLMEBOT_API_KEY = 'XXXXX'; // ⚠️ CAMBIAR
+
+async function enviarWhatsApp(mensaje) {
+    if (ADMIN_WHATSAPP === '+521234567890') {
+        console.log('⚠️ WhatsApp no configurado');
+        return false;
+    }
+    try {
+        const url = `https://api.callmebot.com/whatsapp.php?phone=${ADMIN_WHATSAPP}&text=${encodeURIComponent(mensaje)}&apikey=${CALLMEBOT_API_KEY}`;
+        await axios.get(url);
+        console.log('✅ WhatsApp enviado');
+        return true;
+    } catch (error) {
+        console.error('❌ Error WhatsApp:', error.message);
+        return false;
+    }
+}
+
+// ==================== CREAR TABLAS ADICIONALES ====================
 db.run(`
     CREATE TABLE IF NOT EXISTS order_payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16,8 +37,37 @@ db.run(`
         FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
     )
 `, (err) => {
-    if (err) console.error('❌ Error creando tabla order_payments:', err.message);
+    if (err) console.error('❌ Error order_payments:', err.message);
     else console.log('✅ Tabla order_payments lista');
+});
+
+db.run(`
+    CREATE TABLE IF NOT EXISTS consumibles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        stock_actual INTEGER DEFAULT 0,
+        stock_minimo INTEGER DEFAULT 10,
+        unidad TEXT DEFAULT 'pieza',
+        activo INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+`, (err) => {
+    if (err) console.error('❌ Error consumibles:', err.message);
+    else console.log('✅ Tabla consumibles lista');
+});
+
+db.run(`
+    CREATE TABLE IF NOT EXISTS recetas_consumibles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        producto_id INTEGER NOT NULL,
+        consumible_id INTEGER NOT NULL,
+        cantidad INTEGER DEFAULT 1,
+        FOREIGN KEY (producto_id) REFERENCES products(id),
+        FOREIGN KEY (consumible_id) REFERENCES consumibles(id)
+    )
+`, (err) => {
+    if (err) console.error('❌ Error recetas_consumibles:', err.message);
+    else console.log('✅ Tabla recetas_consumibles lista');
 });
 
 const app = express();
@@ -28,7 +78,6 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// Deshabilitar la caché del navegador específicamente para los archivos .js
 app.use('/js', (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
@@ -46,9 +95,7 @@ app.get('/api/products', (req, res) => {
 
 app.post('/api/products', (req, res) => {
   const { nombre, precio, stock } = req.body;
-  if (!nombre || isNaN(precio)) {
-    return res.status(400).json({ error: 'Datos inválidos' });
-  }
+  if (!nombre || isNaN(precio)) return res.status(400).json({ error: 'Datos inválidos' });
   db.run(
     `INSERT INTO products (nombre, precio, stock, activo) VALUES (?, ?, ?, 1)`,
     [nombre, precio, stock || 0],
@@ -80,6 +127,14 @@ app.put('/api/products/stock', (req, res) => {
   });
 });
 
+app.delete('/api/products/:id', (req, res) => {
+    const { id } = req.params;
+    db.run("UPDATE products SET activo = 0 WHERE id = ?", [id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
 // ==================== ÓRDENES ====================
 app.post('/api/orders', (req, res) => {
   const { cliente, items, total, metodo_pago, tipo_orden = 'local', estado_inicial = 'pendiente', total_usd = 0 } = req.body;
@@ -109,7 +164,40 @@ app.post('/api/orders', (req, res) => {
                 db.run('ROLLBACK');
                 return res.status(500).json({ error: err.message });
               }
+              
+              // Descontar stock del producto
               db.run('UPDATE products SET stock = stock - ? WHERE id = ?', [item.cantidad, item.id]);
+              
+              // DESCONTAR CONSUMIBLES
+              db.all(`
+                SELECT r.consumible_id, r.cantidad as cant_por_unidad, c.nombre, c.stock_actual, c.stock_minimo, c.unidad
+                FROM recetas_consumibles r
+                JOIN consumibles c ON c.id = r.consumible_id
+                WHERE r.producto_id = ?
+              `, [item.id], (errC, recetas) => {
+                if (!errC && recetas && recetas.length > 0) {
+                  recetas.forEach(receta => {
+                    const cantidadTotal = receta.cant_por_unidad * item.cantidad;
+                    db.run(
+                      'UPDATE consumibles SET stock_actual = stock_actual - ? WHERE id = ?',
+                      [cantidadTotal, receta.consumible_id]
+                    );
+                    
+                    const nuevoStock = receta.stock_actual - cantidadTotal;
+                    if (nuevoStock <= receta.stock_minimo) {
+                      const mensaje = `⚠️ ALERTA CONSUMIBLE BAJO\n\n📦 ${receta.nombre}\n📊 Stock: ${nuevoStock} ${receta.unidad}\n⚠️ Mínimo: ${receta.stock_minimo}\n🕐 ${new Date().toLocaleString()}`;
+                      io.emit('consumible-alerta', {
+                        id: receta.consumible_id,
+                        nombre: receta.nombre,
+                        stock_actual: nuevoStock,
+                        stock_minimo: receta.stock_minimo
+                      });
+                      enviarWhatsApp(mensaje);
+                    }
+                  });
+                }
+              });
+              
               insertados++;
               if (insertados === items.length) {
                 db.run('COMMIT');
@@ -176,25 +264,17 @@ app.get('/api/orders/:id', (req, res) => {
 app.put('/api/orders/:id', (req, res) => {
   const { id } = req.params;
   const { estado, metodo_pago, total_usd } = req.body;
-  console.log(`[PUT] Orden ${id} -> estado: ${estado}, metodo: ${metodo_pago || '---'}, total_usd: ${total_usd || 0}`);
-
+  console.log(`[PUT] Orden ${id} -> estado: ${estado}`);
   let sql = 'UPDATE orders SET estado = ?, updated_at = CURRENT_TIMESTAMP';
   let params = [estado];
-  if (metodo_pago) {
-    sql += ', metodo_pago = ?';
-    params.push(metodo_pago);
-  }
-  if (total_usd !== undefined) {
-    sql += ', total_usd = ?';
-    params.push(total_usd);
-  }
+  if (metodo_pago) { sql += ', metodo_pago = ?'; params.push(metodo_pago); }
+  if (total_usd !== undefined) { sql += ', total_usd = ?'; params.push(total_usd); }
   sql += ' WHERE id = ?';
   params.push(id);
 
   db.run(sql, params, function(err) {
     if (err) return res.status(500).json({ error: err.message });
     if (this.changes === 0) return res.status(404).json({ error: 'Orden no encontrada' });
-    console.log(`✅ Orden ${id} actualizada a ${estado}`);
     io.emit('estado-actualizado', { orderId: id, estado });
     res.json({ success: true });
   });
@@ -203,17 +283,11 @@ app.put('/api/orders/:id', (req, res) => {
 app.put('/api/orders/:id/add-extra', (req, res) => {
   const { id } = req.params;
   const { nombre, precio, cantidad } = req.body;
-  if (!nombre || !precio || !cantidad) {
-    return res.status(400).json({ error: 'Faltan datos del extra' });
-  }
+  if (!nombre || !precio || !cantidad) return res.status(400).json({ error: 'Faltan datos' });
   const subtotal = precio * cantidad;
-
   db.get('SELECT * FROM orders WHERE id = ?', [id], (err, order) => {
-    if (err || !order) {
-      return res.status(404).json({ error: 'Orden no encontrada' });
-    }
+    if (err || !order) return res.status(404).json({ error: 'Orden no encontrada' });
     const nuevoTotal = order.total + subtotal;
-
     db.run(
       `INSERT INTO order_items (order_id, product_id, nombre_producto, cantidad, precio_unitario, subtotal)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -230,32 +304,17 @@ app.put('/api/orders/:id/add-extra', (req, res) => {
   });
 });
 
-// ==================== ELIMINAR ORDEN ====================
 app.delete('/api/orders/:id', (req, res) => {
     const { id } = req.params;
-    console.log(`🗑️ Solicitud para eliminar orden ID: ${id}`);
-    
     db.get('SELECT * FROM orders WHERE id = ?', [id], (err, order) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!order) return res.status(404).json({ error: 'Orden no encontrada' });
-        
-        if (order.estado === 'pagado') {
-            return res.status(403).json({ error: 'No se puede eliminar una orden ya pagada' });
-        }
-        
+        if (order.estado === 'pagado') return res.status(403).json({ error: 'No se puede eliminar una orden pagada' });
         db.run('DELETE FROM order_items WHERE order_id = ?', [id], (err) => {
             if (err) return res.status(500).json({ error: err.message });
-            
             db.run('DELETE FROM orders WHERE id = ?', [id], function(err) {
                 if (err) return res.status(500).json({ error: err.message });
-                
-                console.log(`✅ Orden ${id} eliminada correctamente`);
-                io.emit('orden-eliminada', { 
-                    orderId: id, 
-                    order_number: order.order_number,
-                    cliente: order.cliente 
-                });
-                
+                io.emit('orden-eliminada', { orderId: id, order_number: order.order_number, cliente: order.cliente });
                 res.json({ success: true, message: `Orden ${order.order_number} eliminada` });
             });
         });
@@ -286,74 +345,47 @@ app.get('/api/cash/status', (req, res) => {
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 
-// ==================== CERRAR TURNO (VERSIÓN CORREGIDA CON PAGOS DIVIDIDOS) ====================
 app.post('/api/cash/close', (req, res) => {
-  console.log('🔒 Solicitud de cierre de turno recibida');
-  
+  console.log('🔒 Cierre de turno');
   db.get(`SELECT * FROM cash_register WHERE estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1`, (err, turno) => {
-    if (err || !turno) {
-      console.error('❌ No hay turno abierto:', err ? err.message : 'sin turno');
-      return res.status(400).json({ error: 'No hay turno abierto' });
-    }
+    if (err || !turno) return res.status(400).json({ error: 'No hay turno abierto' });
 
-    // Obtener ventas de order_payments (con fallback a orders)
     db.all(`
       SELECT metodo_pago, SUM(monto) as total_mxn, 0 as total_usd
-      FROM order_payments 
-      WHERE created_at >= ?
+      FROM order_payments WHERE created_at >= ?
       GROUP BY metodo_pago
     `, [turno.fecha_apertura], (err, ventasPorMetodo) => {
-      
-      // Si hay error (tabla no existe), usar fallback
       if (err) {
-        console.warn('⚠️ Error en order_payments, usando fallback:', err.message);
         db.all(`
           SELECT metodo_pago, SUM(total) as total_mxn, SUM(total_usd) as total_usd
-          FROM orders 
-          WHERE created_at >= ? AND estado = 'pagado'
+          FROM orders WHERE created_at >= ? AND estado = 'pagado'
           GROUP BY metodo_pago
         `, [turno.fecha_apertura], (err2, ventasFallback) => {
-          if (err2) {
-            console.error('❌ Error en fallback:', err2.message);
-            return res.status(500).json({ error: err2.message });
-          }
+          if (err2) return res.status(500).json({ error: err2.message });
           generarPDF(turno, ventasFallback || []);
         });
         return;
       }
-      
       generarPDF(turno, ventasPorMetodo || []);
     });
   });
   
-  // Función auxiliar para generar el PDF
   function generarPDF(turno, ventasPorMetodo) {
     let ventasEfectivo = 0, ventasTarjeta = 0, ventasTransferencia = 0, ventasDolaresMXN = 0, ventasDolaresUSD = 0;
-    
     ventasPorMetodo.forEach(v => {
       if (v.metodo_pago === 'Efectivo') ventasEfectivo = v.total_mxn || 0;
       else if (v.metodo_pago === 'Tarjeta') ventasTarjeta = v.total_mxn || 0;
       else if (v.metodo_pago === 'Transferencia') ventasTransferencia = v.total_mxn || 0;
-      else if (v.metodo_pago === 'Dólares') {
-        ventasDolaresMXN = v.total_mxn || 0;
-        ventasDolaresUSD = v.total_usd || 0;
-      }
+      else if (v.metodo_pago === 'Dólares') { ventasDolaresMXN = v.total_mxn || 0; ventasDolaresUSD = v.total_usd || 0; }
     });
     
     const totalVendidoMXN = ventasEfectivo + ventasTarjeta + ventasTransferencia + ventasDolaresMXN;
     const efectivoEnCajaMXN = turno.fondo_inicial + ventasEfectivo;
 
     const datosCierre = {
-      fondoInicial: turno.fondo_inicial,
-      ventasEfectivo: ventasEfectivo,
-      ventasTarjeta: ventasTarjeta,
-      ventasTransferencia: ventasTransferencia,
-      ventasDolaresUSD: ventasDolaresUSD,
-      ventasDolaresMXN: ventasDolaresMXN,
-      totalVendidoMXN: totalVendidoMXN,
-      efectivoEnCajaMXN: efectivoEnCajaMXN,
-      fechaApertura: turno.fecha_apertura,
-      fechaCierre: new Date().toISOString()
+      fondoInicial: turno.fondo_inicial, ventasEfectivo, ventasTarjeta, ventasTransferencia,
+      ventasDolaresUSD, ventasDolaresMXN, totalVendidoMXN, efectivoEnCajaMXN,
+      fechaApertura: turno.fecha_apertura, fechaCierre: new Date().toISOString()
     };
 
     const doc = new PDFDocument({ margin: 50 });
@@ -361,22 +393,11 @@ app.post('/api/cash/close', (req, res) => {
     doc.on('data', buffers.push.bind(buffers));
     doc.on('end', () => {
       const pdfData = Buffer.concat(buffers);
-      
-      // Cerrar el turno PRIMERO
-      db.run(`
-        UPDATE cash_register SET estado = 'cerrada', fecha_cierre = datetime('now', 'localtime'), fondo_final = ?
-        WHERE id = ?
-      `, [efectivoEnCajaMXN, turno.id], (err) => {
-        if (err) console.error('Error al cerrar turno:', err);
-        else console.log('✅ Turno cerrado correctamente');
-      });
-      
-      // Enviar respuesta
-      res.json({
-        success: true,
-        pdf: pdfData.toString('base64'),
-        cierre: datosCierre
-      });
+      db.run(`UPDATE cash_register SET estado = 'cerrada', fecha_cierre = datetime('now', 'localtime'), fondo_final = ? WHERE id = ?`,
+        [efectivoEnCajaMXN, turno.id], (err) => {
+          if (err) console.error('Error cerrando turno:', err);
+        });
+      res.json({ success: true, pdf: pdfData.toString('base64'), cierre: datosCierre });
     });
 
     doc.fontSize(20).text('MATTI\'S B-B-Q', { align: 'center' });
@@ -386,21 +407,16 @@ app.post('/api/cash/close', (req, res) => {
     doc.fontSize(10).text(`Apertura: ${new Date(turno.fecha_apertura).toLocaleString()}`, { align: 'center' });
     doc.text(`Cierre: ${new Date().toLocaleString()}`, { align: 'center' });
     doc.moveDown();
-
     doc.fontSize(12).text('Resumen de ventas:', { underline: true });
     doc.text(`Fondo inicial: $${turno.fondo_inicial.toFixed(2)} MXN`);
     doc.text(`Ventas en efectivo: $${ventasEfectivo.toFixed(2)} MXN`);
     doc.text(`Ventas con tarjeta: $${ventasTarjeta.toFixed(2)} MXN`);
     doc.text(`Ventas por transferencia: $${ventasTransferencia.toFixed(2)} MXN`);
-    doc.text(`Ventas en dólares: $${ventasDolaresUSD.toFixed(2)} USD (equivalente a $${ventasDolaresMXN.toFixed(2)} MXN)`);
+    doc.text(`Ventas en dólares: $${ventasDolaresUSD.toFixed(2)} USD`);
     doc.moveDown();
-    doc.text(`TOTAL VENDIDO EN MXN: $${totalVendidoMXN.toFixed(2)}`, { bold: true });
+    doc.text(`TOTAL VENDIDO: $${totalVendidoMXN.toFixed(2)}`, { bold: true });
     doc.moveDown();
-    doc.fontSize(14).text(`EFECTIVO EN CAJA (MXN): $${efectivoEnCajaMXN.toFixed(2)}`, { bold: true });
-    doc.text(`EFECTIVO EN CAJA (USD): $${ventasDolaresUSD.toFixed(2)}`, { bold: true });
-    doc.moveDown();
-    doc.fontSize(8).text('Gracias por usar Matti\'s BBQ System', { align: 'center' });
-
+    doc.fontSize(14).text(`EFECTIVO EN CAJA: $${efectivoEnCajaMXN.toFixed(2)}`, { bold: true });
     doc.end();
   }
 });
@@ -409,10 +425,7 @@ app.post('/api/cash/close', (req, res) => {
 app.post('/api/orders/:id/payments', (req, res) => {
     const { id } = req.params;
     const { metodo_pago, monto } = req.body;
-    
-    if (!metodo_pago || !monto || monto <= 0) {
-        return res.status(400).json({ error: 'Datos de pago inválidos' });
-    }
+    if (!metodo_pago || !monto || monto <= 0) return res.status(400).json({ error: 'Datos inválidos' });
     
     db.get('SELECT * FROM orders WHERE id = ?', [id], (err, order) => {
         if (err) return res.status(500).json({ error: err.message });
@@ -423,22 +436,13 @@ app.post('/api/orders/:id/payments', (req, res) => {
             [id, metodo_pago, monto],
             function(err) {
                 if (err) return res.status(500).json({ error: err.message });
-                
                 db.get('SELECT SUM(monto) as total_pagado FROM order_payments WHERE order_id = ?', [id], (err, result) => {
                     if (err) return res.status(500).json({ error: err.message });
-                    
                     const totalPagado = result.total_pagado || 0;
-                    
                     if (metodo_pago === 'Dólares') {
                         db.run('UPDATE orders SET total_usd = COALESCE(total_usd, 0) + ? WHERE id = ?', [monto, id]);
                     }
-                    
-                    res.json({
-                        success: true,
-                        payment_id: this.lastID,
-                        total_pagado: totalPagado,
-                        falta: Math.max(0, order.total - totalPagado)
-                    });
+                    res.json({ success: true, payment_id: this.lastID, total_pagado: totalPagado, falta: Math.max(0, order.total - totalPagado) });
                 });
             }
         );
@@ -453,43 +457,109 @@ app.get('/api/orders/:id/payments', (req, res) => {
     });
 });
 
-app.delete('/api/orders/:id/payments/:paymentId', (req, res) => {
-    const { id, paymentId } = req.params;
-    db.run('DELETE FROM order_payments WHERE id = ? AND order_id = ?', [paymentId, id], function(err) {
+// ==================== CONSUMIBLES ====================
+app.get('/api/consumibles', (req, res) => {
+    db.all('SELECT * FROM consumibles WHERE activo = 1 ORDER BY nombre', (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+app.post('/api/consumibles', (req, res) => {
+    const { nombre, stock_actual, stock_minimo, unidad } = req.body;
+    if (!nombre) return res.status(400).json({ error: 'Nombre requerido' });
+    db.run(
+        'INSERT INTO consumibles (nombre, stock_actual, stock_minimo, unidad) VALUES (?, ?, ?, ?)',
+        [nombre, stock_actual || 0, stock_minimo || 10, unidad || 'pieza'],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
+});
+
+app.put('/api/consumibles/:id', (req, res) => {
+    const { id } = req.params;
+    const { nombre, stock_actual, stock_minimo, unidad } = req.body;
+    db.run(
+        'UPDATE consumibles SET nombre = ?, stock_actual = ?, stock_minimo = ?, unidad = ? WHERE id = ?',
+        [nombre, stock_actual, stock_minimo, unidad, id],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        }
+    );
+});
+
+app.put('/api/consumibles/:id/agregar-stock', (req, res) => {
+    const { id } = req.params;
+    const { cantidad } = req.body;
+    db.run('UPDATE consumibles SET stock_actual = stock_actual + ? WHERE id = ?', [cantidad, id], function(err) {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ success: true });
     });
 });
 
-// ==================== CREAR TABLA DE PAGOS (EMERGENCIA) ====================
-app.get('/api/init-order-payments', (req, res) => {
-    db.run(`
-        CREATE TABLE IF NOT EXISTS order_payments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            order_id INTEGER NOT NULL,
-            metodo_pago TEXT NOT NULL,
-            monto REAL NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
-        )
-    `, (err) => {
-        if (err) {
-            console.error('Error:', err);
-            return res.json({ success: false, error: err.message });
-        }
-        res.json({ success: true, message: 'Tabla order_payments creada correctamente' });
+app.delete('/api/consumibles/:id', (req, res) => {
+    const { id } = req.params;
+    db.run('UPDATE consumibles SET activo = 0 WHERE id = ?', [id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
     });
 });
 
-// Servir frontend
+app.get('/api/consumibles/alertas', (req, res) => {
+    db.all(`SELECT * FROM consumibles WHERE stock_actual <= stock_minimo AND activo = 1 ORDER BY stock_actual ASC`, (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+app.post('/api/recetas', (req, res) => {
+    const { producto_id, consumible_id, cantidad } = req.body;
+    db.run('INSERT INTO recetas_consumibles (producto_id, consumible_id, cantidad) VALUES (?, ?, ?)',
+        [producto_id, consumible_id, cantidad || 1],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
+});
+
+app.get('/api/recetas/:productoId', (req, res) => {
+    const { productoId } = req.params;
+    db.all(`
+        SELECT r.id, r.cantidad, c.id as consumible_id, c.nombre, c.stock_actual, c.unidad
+        FROM recetas_consumibles r
+        JOIN consumibles c ON c.id = r.consumible_id
+        WHERE r.producto_id = ?
+    `, [productoId], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+app.delete('/api/recetas/:id', (req, res) => {
+    const { id } = req.params;
+    db.run('DELETE FROM recetas_consumibles WHERE id = ?', [id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+app.post('/api/test-whatsapp', async (req, res) => {
+    const { mensaje } = req.body;
+    const enviado = await enviarWhatsApp(mensaje || '🧪 Prueba desde Matti\'s BBQ');
+    res.json({ success: enviado });
+});
+
+// ==================== SERVIDOR ====================
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'caja.html')));
 app.get('/cocina.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'cocina.html')));
-app.get('/pending-payment.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'pending-payment.html')));
 app.get('/stock.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'stock.html')));
 app.get('/admin.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/consultas.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'consultas.html')));
 
-// WebSocket
 io.on('connection', (socket) => console.log('📱 Cliente conectado:', socket.id));
 
 const PORT = process.env.PORT || 3000;
@@ -505,31 +575,21 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`🔥 Servidor en http://${getLocalIp()}:${PORT}`);
 });
 
-// ==================== RESPALDO DE BASE DE DATOS ====================
+// ==================== RESPALDO ====================
 app.get('/admin/backup-info', (req, res) => {
     try {
         const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'database.sqlite');
         const stats = fs.statSync(dbPath);
-        res.json({
-            size: stats.size,
-            size_mb: (stats.size / 1024 / 1024).toFixed(2),
-            modified: stats.mtime,
-            db_path: dbPath
-        });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        res.json({ size: stats.size, size_mb: (stats.size / 1024 / 1024).toFixed(2), modified: stats.mtime, db_path: dbPath });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/admin/backup', (req, res) => {
     try {
         const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'database.sqlite');
         const fecha = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
-        const nombreArchivo = `respaldo_mattis_${fecha}.sqlite`;
-        res.download(dbPath, nombreArchivo);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        res.download(dbPath, `respaldo_mattis_${fecha}.sqlite`);
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 const multer = require('multer');
@@ -538,27 +598,18 @@ const upload = multer({ dest: 'uploads/' });
 app.post('/admin/restore', upload.single('backup'), (req, res) => {
     try {
         const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'database.sqlite');
-        
-        if (!req.file) {
-            return res.json({ success: false, message: 'No se recibió ningún archivo' });
-        }
-        
+        if (!req.file) return res.json({ success: false, message: 'No se recibió archivo' });
         const fileBuffer = fs.readFileSync(req.file.path);
         if (!fileBuffer.slice(0, 15).toString().includes('SQLite')) {
             fs.unlinkSync(req.file.path);
-            return res.json({ success: false, message: 'El archivo no es una base de datos SQLite válida' });
+            return res.json({ success: false, message: 'No es SQLite válido' });
         }
-        
         const backupPath = `${dbPath}.backup_${Date.now()}`;
         fs.copyFileSync(dbPath, backupPath);
         fs.copyFileSync(req.file.path, dbPath);
         fs.unlinkSync(req.file.path);
-        
-        res.json({ success: true, message: 'Base de datos restaurada correctamente' });
-    } catch (err) {
-        console.error('Error al restaurar:', err);
-        res.json({ success: false, message: err.message });
-    }
+        res.json({ success: true, message: 'Base restaurada' });
+    } catch (err) { res.json({ success: false, message: err.message }); }
 });
 
 // ==================== CAJA REGISTRADORA ====================
@@ -569,92 +620,45 @@ function initDrawer() {
     try {
         const { SerialPort } = require('serialport');
         const ports = ['COM1', 'COM2', 'COM3', 'COM4', 'COM5', '/dev/ttyUSB0', '/dev/ttyS0'];
-        
         for (const portPath of ports) {
             try {
-                const testPort = new SerialPort({
-                    path: portPath,
-                    baudRate: 9600,
-                    dataBits: 8,
-                    parity: 'none',
-                    stopBits: 1,
-                    autoOpen: false
-                });
-                
+                const testPort = new SerialPort({ path: portPath, baudRate: 9600, autoOpen: false });
                 testPort.open((err) => {
                     if (!err) {
-                        console.log(`✅ Caja registradora encontrada en: ${portPath}`);
+                        console.log(`✅ Caja en: ${portPath}`);
                         drawerPort = testPort;
                         drawerConnected = true;
-                        drawerPort.on('error', (e) => console.log('⚠️ Error en caja:', e.message));
                     }
                 });
-                
                 if (drawerConnected) break;
-            } catch (e) {
-                console.log(`⚠️ Error probando ${portPath}:`, e.message);
-            }
+            } catch (e) {}
         }
-        
-        if (!drawerConnected) {
-            console.log('⚠️ No se encontró caja registradora en ningún puerto.');
-        }
-    } catch (error) {
-        console.log('⚠️ No se pudo cargar serialport:', error.message);
-    }
+    } catch (error) { console.log('⚠️ serialport no disponible'); }
 }
 
 initDrawer();
 
-function abrirCajaRegistradora() {
+app.post('/api/cash/drawer/open', (req, res) => {
     if (!drawerConnected || !drawerPort) {
         initDrawer();
-        if (!drawerConnected) return false;
+        if (!drawerConnected) return res.json({ success: false });
     }
-    
     try {
-        const comando = Buffer.from([0x1B, 0x70, 0x00, 0x19, 0xFA]);
-        drawerPort.write(comando);
-        console.log('💰 Caja registradora abierta');
-        return true;
-    } catch (error) {
-        console.error('❌ Error abriendo caja:', error.message);
-        drawerConnected = false;
-        drawerPort = null;
-        return false;
-    }
-}
-
-app.post('/api/cash/drawer/open', (req, res) => {
-    const success = abrirCajaRegistradora();
-    res.json({ 
-        success: success, 
-        message: success ? 'Caja abierta' : 'No se pudo abrir la caja',
-        connected: drawerConnected
-    });
-});
-
-app.get('/api/cash/drawer/status', (req, res) => {
-    res.json({ 
-        connected: drawerConnected,
-        port: drawerPort ? drawerPort.path : 'no conectado'
-    });
+        drawerPort.write(Buffer.from([0x1B, 0x70, 0x00, 0x19, 0xFA]));
+        res.json({ success: true });
+    } catch (error) { res.json({ success: false }); }
 });
 
 // ==================== ADMINISTRACIÓN ====================
 app.get('/api/admin/dashboard', (req, res) => {
     db.get("SELECT COUNT(*) as count FROM orders WHERE estado = 'pagado'", (err, totalVentas) => {
         if (err) return res.status(500).json({ error: err.message });
-        
         db.get("SELECT SUM(total) as total FROM orders WHERE estado = 'pagado'", (err, totalMonto) => {
             if (err) return res.status(500).json({ error: err.message });
-            
             db.get("SELECT COUNT(*) as count FROM products WHERE activo = 1", (err, totalProductos) => {
                 if (err) return res.status(500).json({ error: err.message });
-                
                 db.all("SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders WHERE estado = 'pagado' GROUP BY metodo_pago", (err, ventasPorMetodo) => {
                     if (err) return res.status(500).json({ error: err.message });
-                    
                     res.json({
                         totalVentas: totalVentas?.count || 0,
                         totalMonto: totalMonto?.total || 0,
@@ -670,38 +674,21 @@ app.get('/api/admin/dashboard', (req, res) => {
 
 app.get('/api/admin/sales/:periodo', (req, res) => {
     const { periodo } = req.params;
-    let where = '';
-    let periodoText = '';
-    
+    let where = '', periodoText = '';
     switch(periodo) {
-        case 'dia':
-            where = "WHERE date(created_at) = date('now', 'localtime') AND estado = 'pagado'";
-            periodoText = 'Hoy';
-            break;
-        case 'semana':
-            where = "WHERE date(created_at) >= date('now', 'localtime', '-7 days') AND estado = 'pagado'";
-            periodoText = 'Última semana';
-            break;
-        case 'mes':
-            where = "WHERE date(created_at) >= date('now', 'localtime', '-30 days') AND estado = 'pagado'";
-            periodoText = 'Último mes';
-            break;
-        default:
-            return res.status(400).json({ error: 'Período no válido' });
+        case 'dia': where = "WHERE date(created_at) = date('now', 'localtime') AND estado = 'pagado'"; periodoText = 'Hoy'; break;
+        case 'semana': where = "WHERE date(created_at) >= date('now', 'localtime', '-7 days') AND estado = 'pagado'"; periodoText = 'Última semana'; break;
+        case 'mes': where = "WHERE date(created_at) >= date('now', 'localtime', '-30 days') AND estado = 'pagado'"; periodoText = 'Último mes'; break;
+        default: return res.status(400).json({ error: 'Período inválido' });
     }
-    
     db.get(`SELECT COUNT(*) as count FROM orders ${where}`, (err, totalVentas) => {
         if (err) return res.status(500).json({ error: err.message });
-        
         db.get(`SELECT SUM(total) as total FROM orders ${where}`, (err, totalMonto) => {
             if (err) return res.status(500).json({ error: err.message });
-            
             db.all(`SELECT metodo_pago, COUNT(*) as cantidad, SUM(total) as total FROM orders ${where} GROUP BY metodo_pago`, (err, porMetodo) => {
                 if (err) return res.status(500).json({ error: err.message });
-                
                 db.all(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT 50`, (err, ultimasVentas) => {
                     if (err) return res.status(500).json({ error: err.message });
-                    
                     res.json({
                         periodo: periodoText,
                         totalVentas: totalVentas?.count || 0,
@@ -718,47 +705,16 @@ app.get('/api/admin/sales/:periodo', (req, res) => {
 // ==================== CONSULTAS SQL ====================
 app.post('/api/query', (req, res) => {
     const { sql } = req.body;
-    
-    if (!sql) {
-        return res.status(400).json({ error: 'No se proporcionó consulta SQL' });
-    }
-    
+    if (!sql) return res.status(400).json({ error: 'Sin consulta' });
     const sqlTrim = sql.trim().toLowerCase();
-    if (!sqlTrim.startsWith('select')) {
-        return res.status(403).json({ error: 'Solo se permiten consultas SELECT' });
-    }
-    
+    if (!sqlTrim.startsWith('select')) return res.status(403).json({ error: 'Solo SELECT' });
     const forbidden = ['drop', 'delete', 'update', 'insert', 'alter', 'create', 'truncate', 'pragma'];
     for (const word of forbidden) {
-        if (sqlTrim.includes(word)) {
-            return res.status(403).json({ error: `Comando no permitido: ${word}` });
-        }
+        if (sqlTrim.includes(word)) return res.status(403).json({ error: `No permitido: ${word}` });
     }
-    
-    console.log('📝 Consulta SQL ejecutada:', sql);
-    
     db.all(sql, (err, rows) => {
-        if (err) {
-            console.error('❌ Error en consulta:', err);
-            return res.status(500).json({ error: err.message });
-        }
-        
-        const columns = rows && rows.length > 0 ? Object.keys(rows[0]) : [];
-        
-        res.json({
-            success: true,
-            columns: columns,
-            rows: rows || [],
-            count: rows ? rows.length : 0
-        });
-    });
-});
-
-// Eliminar producto (soft delete)
-app.delete('/api/products/:id', (req, res) => {
-    const { id } = req.params;
-    db.run("UPDATE products SET activo = 0 WHERE id = ?", [id], function(err) {
         if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true });
+        const columns = rows && rows.length > 0 ? Object.keys(rows[0]) : [];
+        res.json({ success: true, columns, rows: rows || [], count: rows ? rows.length : 0 });
     });
 });
