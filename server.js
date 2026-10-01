@@ -70,6 +70,15 @@ db.run(`
     else console.log('✅ Tabla recetas_consumibles lista');
 });
 
+// Agregar columna tipo_servicio si no existe
+db.run(`ALTER TABLE recetas_consumibles ADD COLUMN tipo_servicio TEXT DEFAULT 'local'`, (err) => {
+    if (err && !err.message.includes('duplicate column')) {
+        console.error('Error agregando tipo_servicio:', err.message);
+    } else {
+        console.log('✅ Columna tipo_servicio lista');
+    }
+});
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, { cors: { origin: "*" } });
@@ -168,35 +177,45 @@ app.post('/api/orders', (req, res) => {
               // Descontar stock del producto
               db.run('UPDATE products SET stock = stock - ? WHERE id = ?', [item.cantidad, item.id]);
               
-              // DESCONTAR CONSUMIBLES
-              db.all(`
-                SELECT r.consumible_id, r.cantidad as cant_por_unidad, c.nombre, c.stock_actual, c.stock_minimo, c.unidad
-                FROM recetas_consumibles r
-                JOIN consumibles c ON c.id = r.consumible_id
-                WHERE r.producto_id = ?
-              `, [item.id], (errC, recetas) => {
-                if (!errC && recetas && recetas.length > 0) {
-                  recetas.forEach(receta => {
-                    const cantidadTotal = receta.cant_por_unidad * item.cantidad;
-                    db.run(
-                      'UPDATE consumibles SET stock_actual = stock_actual - ? WHERE id = ?',
-                      [cantidadTotal, receta.consumible_id]
-                    );
-                    
-                    const nuevoStock = receta.stock_actual - cantidadTotal;
-                    if (nuevoStock <= receta.stock_minimo) {
-                      const mensaje = `⚠️ ALERTA CONSUMIBLE BAJO\n\n📦 ${receta.nombre}\n📊 Stock: ${nuevoStock} ${receta.unidad}\n⚠️ Mínimo: ${receta.stock_minimo}\n🕐 ${new Date().toLocaleString()}`;
-                      io.emit('consumible-alerta', {
-                        id: receta.consumible_id,
-                        nombre: receta.nombre,
-                        stock_actual: nuevoStock,
-                        stock_minimo: receta.stock_minimo
-                      });
-                      enviarWhatsApp(mensaje);
-                    }
-                  });
-                }
-              });
+// 🔥 DESCONTAR CONSUMIBLES SEGÚN TIPO DE ORDEN
+console.log(`🔍 Buscando recetas: producto_id=${item.id}, tipo_servicio=${tipo_orden}`);
+db.all(`
+    SELECT r.consumible_id, r.cantidad as cant_por_unidad, c.nombre, c.stock_actual, c.stock_minimo, c.unidad
+    FROM recetas_consumibles r
+    JOIN consumibles c ON c.id = r.consumible_id
+    WHERE r.producto_id = ? AND r.tipo_servicio = ?
+`, [item.id, tipo_orden], (errC, recetas) => {
+    if (errC) {
+        console.error('❌ Error buscando recetas:', errC.message);
+        return;
+    }
+    console.log(`📦 Recetas encontradas: ${recetas ? recetas.length : 0}`);
+    if (recetas && recetas.length > 0) {
+        console.log('📋 Detalle:', JSON.stringify(recetas));
+    }
+    if (!errC && recetas && recetas.length > 0) {
+        recetas.forEach(receta => {
+            const cantidadTotal = receta.cant_por_unidad * item.cantidad;
+            console.log(`✅ Descontando: ${receta.nombre} x${cantidadTotal}`);
+            db.run(
+                'UPDATE consumibles SET stock_actual = stock_actual - ? WHERE id = ?',
+                [cantidadTotal, receta.consumible_id]
+            );
+            
+            const nuevoStock = receta.stock_actual - cantidadTotal;
+            if (nuevoStock <= receta.stock_minimo) {
+                const mensaje = `⚠️ ALERTA CONSUMIBLE BAJO\n\n📦 ${receta.nombre}\n📊 Stock: ${nuevoStock} ${receta.unidad}\n⚠️ Mínimo: ${receta.stock_minimo}\n🕐 ${new Date().toLocaleString()}`;
+                io.emit('consumible-alerta', {
+                    id: receta.consumible_id,
+                    nombre: receta.nombre,
+                    stock_actual: nuevoStock,
+                    stock_minimo: receta.stock_minimo
+                });
+                enviarWhatsApp(mensaje);
+            }
+        });
+    }
+});
               
               insertados++;
               if (insertados === items.length) {
@@ -516,9 +535,10 @@ app.get('/api/consumibles/alertas', (req, res) => {
 });
 
 app.post('/api/recetas', (req, res) => {
-    const { producto_id, consumible_id, cantidad } = req.body;
-    db.run('INSERT INTO recetas_consumibles (producto_id, consumible_id, cantidad) VALUES (?, ?, ?)',
-        [producto_id, consumible_id, cantidad || 1],
+    const { producto_id, consumible_id, cantidad, tipo_servicio = 'local' } = req.body;
+    db.run(
+        'INSERT INTO recetas_consumibles (producto_id, consumible_id, cantidad, tipo_servicio) VALUES (?, ?, ?, ?)',
+        [producto_id, consumible_id, cantidad || 1, tipo_servicio],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true, id: this.lastID });
@@ -528,12 +548,22 @@ app.post('/api/recetas', (req, res) => {
 
 app.get('/api/recetas/:productoId', (req, res) => {
     const { productoId } = req.params;
-    db.all(`
-        SELECT r.id, r.cantidad, c.id as consumible_id, c.nombre, c.stock_actual, c.unidad
+    const { tipo_servicio } = req.query;
+    
+    let sql = `
+        SELECT r.id, r.cantidad, r.tipo_servicio, c.id as consumible_id, c.nombre, c.stock_actual, c.unidad
         FROM recetas_consumibles r
         JOIN consumibles c ON c.id = r.consumible_id
         WHERE r.producto_id = ?
-    `, [productoId], (err, rows) => {
+    `;
+    const params = [productoId];
+    
+    if (tipo_servicio) {
+        sql += ' AND r.tipo_servicio = ?';
+        params.push(tipo_servicio);
+    }
+    
+    db.all(sql, params, (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows || []);
     });
@@ -570,6 +600,18 @@ const getLocalIp = () => {
       if (net.family === 'IPv4' && !net.internal) return net.address;
   return 'localhost';
 };
+
+app.get('/api/init-tipo-servicio', (req, res) => {
+    db.run(`ALTER TABLE recetas_consumibles ADD COLUMN tipo_servicio TEXT DEFAULT 'local'`, (err) => {
+        if (err) {
+            if (err.message.includes('duplicate column')) {
+                return res.json({ success: true, message: 'Ya existía' });
+            }
+            return res.json({ success: false, error: err.message });
+        }
+        res.json({ success: true, message: 'Columna agregada' });
+    });
+});
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🔥 Servidor en http://${getLocalIp()}:${PORT}`);

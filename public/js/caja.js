@@ -525,7 +525,7 @@ async function cargarOrdenAlCarrito(orderId) {
     }
 }
 
-// ========== PROCESAR PAGO (MODIFICADO - SIN limpiarCarrito) ==========
+// ========== PROCESAR PAGO ==========
 async function procesarPago() {
     console.log('procesarPago iniciado');
     if (!turnoAbierto) {
@@ -534,6 +534,8 @@ async function procesarPago() {
     }
     const cliente = document.getElementById('cliente').value.trim();
     const metodoPago = document.getElementById('metodoPago').value;
+    const tipoOrden = document.getElementById('tipoOrden')?.value || 'local';
+    
     if (!cliente) {
         mostrarNotificacion('⚠️ Ingrese nombre del cliente', 'warning');
         return;
@@ -587,8 +589,8 @@ async function procesarPago() {
                 mostrarNotificacion(`❌ Error: ${data.error || 'desconocido'}`, 'danger');
             }
         } else {
-            // Nueva venta directa (para llevar)
-            console.log('Nueva venta directa');
+            // Nueva venta directa (para llevar o comer)
+            console.log(`Nueva venta - Tipo: ${tipoOrden}`);
             let metodoReal = metodoPago;
             let total_usd = 0;
             if (metodoReal === 'USD') {
@@ -597,6 +599,7 @@ async function procesarPago() {
             } else if (metodoReal === 'Efectivo') {
                 metodoReal = 'Efectivo';
             }
+            
             const response = await fetch('/api/orders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -605,16 +608,15 @@ async function procesarPago() {
                     items: carrito,
                     total: totalMXN,
                     metodo_pago: metodoReal,
-                    tipo_orden: 'llevar',
+                    tipo_orden: tipoOrden,
                     estado_inicial: 'pagado',
                     total_usd: total_usd
                 })
             });
             const result = await response.json();
             if (result.success) {
-                mostrarNotificacion(`✅ Venta para llevar cobrada: ${result.order.order_number}`, 'success');
-                // ⚠️ NO LIMPIAMOS EL CARRITO AQUÍ - lo hará cobrarConTicket()
-                // limpiarCarrito();  ← ELIMINADO
+                mostrarNotificacion(`✅ Venta ${tipoOrden} cobrada: ${result.order.order_number}`, 'success');
+                // NO limpiar aquí - lo hace cobrarConTicket()
                 cargarProductos();
             } else {
                 mostrarNotificacion('❌ Error al crear venta', 'danger');

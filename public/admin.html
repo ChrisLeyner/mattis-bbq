@@ -329,41 +329,74 @@
     </div>
 </div>
 
-<!-- Modal de Recetas (vincular consumibles a productos) -->
+<!-- Modal de Recetas -->
 <div class="modal fade" id="recetaModal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header bg-primary text-white">
                 <h5 class="modal-title">
-                    <i class="fas fa-utensils"></i> Receta del Producto: <span id="recetaProductoNombre"></span>
+                    <i class="fas fa-utensils"></i> Receta: <span id="recetaProductoNombre"></span>
                 </h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="recetaProductoId">
                 
-                <!-- Consumibles ya asignados -->
-                <h6 class="border-bottom pb-2">📋 Consumibles que usa este producto:</h6>
-                <div id="recetaListaActual" class="mb-3">
-                    <div class="text-muted text-center p-3">Sin consumibles asignados</div>
+                <!-- Tabs para Local / Llevar -->
+                <ul class="nav nav-tabs mb-3" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="tab-local" data-bs-toggle="tab" data-bs-target="#pane-local" type="button" role="tab">
+                            🍽️ Para Comer (Local)
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-llevar" data-bs-toggle="tab" data-bs-target="#pane-llevar" type="button" role="tab">
+                            🥡 Para Llevar
+                        </button>
+                    </li>
+                </ul>
+                
+                <div class="tab-content">
+                    <!-- PANE LOCAL -->
+                    <div class="tab-pane fade show active" id="pane-local" role="tabpanel">
+                        <h6 class="border-bottom pb-2">📋 Consumibles para LOCAL:</h6>
+                        <div id="recetaListaLocal" class="mb-3">
+                            <div class="text-muted text-center p-3">Sin consumibles asignados</div>
+                        </div>
+                    </div>
+                    
+                    <!-- PANE LLEVAR -->
+                    <div class="tab-pane fade" id="pane-llevar" role="tabpanel">
+                        <h6 class="border-bottom pb-2">📋 Consumibles para LLEVAR:</h6>
+                        <div id="recetaListaLlevar" class="mb-3">
+                            <div class="text-muted text-center p-3">Sin consumibles asignados</div>
+                        </div>
+                    </div>
                 </div>
                 
-                <!-- Agregar nuevo consumible a la receta -->
-                <div class="card bg-light">
+                <!-- Agregar nuevo consumible -->
+                <div class="card bg-light mt-3">
                     <div class="card-body">
                         <h6><i class="fas fa-plus-circle"></i> Agregar consumible</h6>
                         <div class="row g-2">
-                            <div class="col-md-6">
+                            <div class="col-md-4">
+                                <label class="small">Tipo:</label>
+                                <select id="recetaTipoServicio" class="form-select form-select-sm">
+                                    <option value="local">🍽️ Para Comer (Local)</option>
+                                    <option value="llevar">🥡 Para Llevar</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
                                 <label class="small">Consumible:</label>
                                 <select id="recetaConsumibleSelect" class="form-select form-select-sm">
                                     <option value="">-- Seleccionar --</option>
                                 </select>
                             </div>
-                            <div class="col-md-3">
-                                <label class="small">Cantidad por venta:</label>
+                            <div class="col-md-2">
+                                <label class="small">Cantidad:</label>
                                 <input type="number" id="recetaCantidad" class="form-control form-control-sm" value="1" min="1">
                             </div>
-                            <div class="col-md-3 d-flex align-items-end">
+                            <div class="col-md-2 d-flex align-items-end">
                                 <button class="btn btn-sm btn-primary w-100" onclick="agregarConsumibleAReceta()">
                                     <i class="fas fa-plus"></i> Agregar
                                 </button>

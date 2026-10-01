@@ -4,6 +4,10 @@ let productModal = null;
 let editMode = false;
 let fileToRestore = null;
 let confirmModal = null;
+let consumibleModal = null;
+let compraModal = null;
+let consumiblesList = [];
+let recetaModal = null;
 
 // ==================== VERIFICAR CONTRASEÑA ====================
 function verificarPassword() {
@@ -17,6 +21,7 @@ function verificarPassword() {
         cargarBackupInfo();
         configurarDropZone();
         cargarHistorial();
+        cargarConsumibles();
     } else {
         document.getElementById('passwordError').style.display = 'block';
         document.getElementById('adminPassword').value = '';
@@ -30,13 +35,10 @@ function verificarPassword() {
 async function cargarDashboard() {
     try {
         const response = await fetch('/api/admin/dashboard');
-        if (!response.ok) {
-            throw new Error(`Error ${response.status}: ${response.statusText}`);
-        }
+        if (!response.ok) throw new Error(`Error ${response.status}`);
         const data = await response.json();
         console.log('📊 Datos del dashboard:', data);
         
-        // Asegurar que ventasPorMetodo sea un array
         const ventasPorMetodo = Array.isArray(data.ventasPorMetodo) ? data.ventasPorMetodo : [];
         
         document.getElementById('dashboardContent').innerHTML = `
@@ -101,27 +103,27 @@ async function cargarProductos() {
             container.innerHTML = '<div class="col-12 text-center text-muted p-5">No hay productos registrados</div>';
             return;
         }
-  container.innerHTML = products.map(p => `
-    <div class="col-12 col-md-6 col-lg-4">
-        <div class="product-item d-flex justify-content-between align-items-center">
-            <div>
-                <strong>${p.nombre}</strong>
-                <div class="text-muted small">$${p.precio.toFixed(2)} | Stock: ${p.stock}</div>
+        container.innerHTML = products.map(p => `
+            <div class="col-12 col-md-6 col-lg-4">
+                <div class="product-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>${p.nombre}</strong>
+                        <div class="text-muted small">$${p.precio.toFixed(2)} | Stock: ${p.stock}</div>
+                    </div>
+                    <div>
+                        <button class="btn btn-sm btn-outline-info" onclick="abrirReceta(${p.id}, '${p.nombre.replace(/'/g, "\\'")}')" title="Receta de consumibles">
+                            <i class="fas fa-utensils"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-primary" onclick="editarProducto(${p.id})" title="Editar">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="eliminarProducto(${p.id})" title="Eliminar">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
             </div>
-            <div>
-                <button class="btn btn-sm btn-outline-info" onclick="abrirReceta(${p.id}, '${p.nombre.replace(/'/g, "\\'")}')" title="Receta de consumibles">
-                    <i class="fas fa-utensils"></i>
-                </button>
-                <button class="btn btn-sm btn-outline-primary" onclick="editarProducto(${p.id})" title="Editar producto">
-                    <i class="fas fa-edit"></i>
-                </button>
-                <button class="btn btn-sm btn-outline-danger" onclick="eliminarProducto(${p.id})" title="Eliminar producto">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </div>
-        </div>
-    </div>
-`).join('');
+        `).join('');
     } catch (error) {
         console.error('Error cargando productos:', error);
     }
@@ -131,7 +133,7 @@ function mostrarModalProducto(id = null) {
     editMode = !!id;
     if (id) {
         document.getElementById('productModalTitle').innerText = '✏️ Editar Producto';
-        fetch(`/api/products`)
+        fetch('/api/products')
             .then(r => r.json())
             .then(products => {
                 const p = products.find(pr => pr.id === id);
@@ -157,9 +159,7 @@ function mostrarModalProducto(id = null) {
     productModal.show();
 }
 
-function editarProducto(id) {
-    mostrarModalProducto(id);
-}
+function editarProducto(id) { mostrarModalProducto(id); }
 
 async function guardarProducto() {
     const id = document.getElementById('editProductId').value;
@@ -175,40 +175,34 @@ async function guardarProducto() {
 
     const metodo = id ? 'PUT' : 'POST';
     const url = id ? `/api/products/${id}` : '/api/products';
-    const body = id ? { nombre, precio, stock, imagen } : { nombre, precio, stock, imagen };
-
+    
     try {
         const response = await fetch(url, {
             method: metodo,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+            body: JSON.stringify({ nombre, precio, stock, imagen })
         });
         const data = await response.json();
         if (data.success) {
-            mostrarNotificacion('✅ Producto guardado correctamente', 'success');
+            mostrarNotificacion('✅ Producto guardado', 'success');
             productModal.hide();
             cargarProductos();
             cargarDashboard();
         }
     } catch (error) {
-        console.error('Error guardando producto:', error);
-        mostrarNotificacion('❌ Error al guardar producto', 'danger');
+        mostrarNotificacion('❌ Error al guardar', 'danger');
     }
 }
 
 async function eliminarProducto(id) {
-    if (!confirm('¿Estás seguro de eliminar este producto?')) return;
+    if (!confirm('¿Eliminar este producto?')) return;
     try {
-        const response = await fetch(`/api/products/${id}`, { method: 'DELETE' });
-        const data = await response.json();
-        if (data.success) {
-            mostrarNotificacion('✅ Producto eliminado', 'success');
-            cargarProductos();
-            cargarDashboard();
-        }
+        await fetch(`/api/products/${id}`, { method: 'DELETE' });
+        mostrarNotificacion('✅ Producto eliminado', 'success');
+        cargarProductos();
+        cargarDashboard();
     } catch (error) {
-        console.error('Error eliminando producto:', error);
-        mostrarNotificacion('❌ Error al eliminar', 'danger');
+        mostrarNotificacion('❌ Error', 'danger');
     }
 }
 
@@ -217,136 +211,81 @@ async function cargarBackupInfo() {
     try {
         const response = await fetch('/admin/backup-info');
         const data = await response.json();
-        
         document.getElementById('dbInfo').innerHTML = `
             <small class="text-muted">
                 📦 Tamaño: ${data.size_mb} MB | 
                 🕐 Modificado: ${new Date(data.modified).toLocaleString()}
             </small>
         `;
-        
         const indicator = document.getElementById('statusIndicator');
         const statusText = document.getElementById('statusText');
         if (data.size > 0) {
             indicator.className = 'status-indicator status-online';
             statusText.className = 'badge bg-success';
             statusText.innerText = 'ONLINE';
-        } else {
-            indicator.className = 'status-indicator status-warning';
-            statusText.className = 'badge bg-warning';
-            statusText.innerText = 'VACÍA';
         }
-    } catch (error) {
-        console.error('Error:', error);
-        document.getElementById('dbInfo').innerHTML = `
-            <small class="text-danger">❌ Error al conectar con la base de datos</small>
-        `;
-        const indicator = document.getElementById('statusIndicator');
-        indicator.className = 'status-indicator status-offline';
-        document.getElementById('statusText').className = 'badge bg-danger';
-        document.getElementById('statusText').innerText = 'OFFLINE';
-    }
+    } catch (error) { console.error('Error:', error); }
 }
 
 function configurarDropZone() {
     const dropZone = document.getElementById('dropZone');
     const restoreInput = document.getElementById('restoreInput');
-
     if (!dropZone) return;
 
     dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
         dropZone.classList.add('dragover');
     });
-
-    dropZone.addEventListener('dragleave', () => {
-        dropZone.classList.remove('dragover');
-    });
-
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('dragover');
         const file = e.dataTransfer.files[0];
         if (file && (file.name.endsWith('.sqlite') || file.name.endsWith('.db'))) {
             restaurarRespaldo({ target: { files: [file] } });
-        } else {
-            mostrarNotificacion('⚠️ Selecciona un archivo .sqlite válido', 'warning');
         }
     });
-
     restoreInput.addEventListener('change', (e) => {
-        if (e.target.files[0]) {
-            restaurarRespaldo(e);
-        }
+        if (e.target.files[0]) restaurarRespaldo(e);
     });
 }
 
 function crearRespaldo() {
-    mostrarNotificacion('⏳ Generando respaldo...', 'info');
     const link = document.createElement('a');
     link.href = '/admin/backup';
     link.download = `respaldo_mattis_${new Date().toISOString().slice(0,10)}.sqlite`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    mostrarNotificacion('✅ Respaldo generado correctamente', 'success');
+    mostrarNotificacion('✅ Respaldo generado', 'success');
     agregarAlHistorial('respaldo', new Date().toISOString());
 }
 
 async function restaurarRespaldo(event) {
     const file = event.target.files[0];
     if (!file) return;
-
-    if (!confirm('⚠️ Restaurar un respaldo borrará TODOS los datos actuales. ¿Continuar?')) return;
+    if (!confirm('⚠️ Restaurar borrará TODOS los datos actuales. ¿Continuar?')) return;
 
     const formData = new FormData();
     formData.append('backup', file);
 
-    const progressContainer = document.getElementById('progressContainer');
-    const progressBar = document.getElementById('progressBar');
-    const progressText = document.getElementById('progressText');
-    const progressPercent = document.getElementById('progressPercent');
-
-    progressContainer.style.display = 'block';
-    progressBar.style.width = '0%';
-    progressText.innerText = 'Subiendo archivo...';
-    progressPercent.innerText = '0%';
-
     try {
-        const response = await fetch('/admin/restore', {
-            method: 'POST',
-            body: formData
-        });
+        const response = await fetch('/admin/restore', { method: 'POST', body: formData });
         const result = await response.json();
-
         if (result.success) {
-            progressBar.style.width = '100%';
-            progressText.innerText = '✅ ¡Restauración completada!';
-            progressPercent.innerText = '100%';
-            mostrarNotificacion('✅ Respaldo restaurado correctamente. Recargando...', 'success');
+            mostrarNotificacion('✅ Restaurado. Recargando...', 'success');
             setTimeout(() => location.reload(), 2000);
-        } else {
-            throw new Error(result.message);
         }
-    } catch (error) {
-        console.error('Error:', error);
-        progressBar.style.width = '0%';
-        progressText.innerText = '❌ Error: ' + error.message;
-        progressPercent.innerText = 'ERROR';
-        mostrarNotificacion('❌ Error al restaurar: ' + error.message, 'danger');
-    }
+    } catch (error) { mostrarNotificacion('❌ Error', 'danger'); }
 }
 
-// ==================== HISTORIAL DE RESPALDOS ====================
 function cargarHistorial() {
     const historial = obtenerHistorial();
     const container = document.getElementById('historialList');
-    
     if (historial.length === 0) {
-        container.innerHTML = '<div class="text-center text-muted p-3">No hay respaldos registrados</div>';
+        container.innerHTML = '<div class="text-center text-muted p-3">No hay respaldos</div>';
         return;
     }
-    
     container.innerHTML = historial.map((item, index) => `
         <div class="backup-history-item d-flex justify-content-between align-items-center">
             <div>
@@ -355,12 +294,8 @@ function cargarHistorial() {
                 <small class="text-muted ms-2">${new Date(item.fecha).toLocaleString()}</small>
             </div>
             <div>
-                <button class="btn btn-sm btn-outline-success" onclick="descargarHistorial()">
-                    <i class="fas fa-download"></i>
-                </button>
-                <button class="btn btn-sm btn-outline-danger" onclick="eliminarHistorial(${index})">
-                    <i class="fas fa-trash"></i>
-                </button>
+                <button class="btn btn-sm btn-outline-success" onclick="window.open('/admin/backup', '_blank')"><i class="fas fa-download"></i></button>
+                <button class="btn btn-sm btn-outline-danger" onclick="eliminarHistorial(${index})"><i class="fas fa-trash"></i></button>
             </div>
         </div>
     `).join('');
@@ -369,27 +304,17 @@ function cargarHistorial() {
 function agregarAlHistorial(tipo, fecha) {
     let historial = obtenerHistorial();
     historial.unshift({ tipo, fecha });
-    if (historial.length > 50) {
-        historial = historial.slice(0, 50);
-    }
+    if (historial.length > 50) historial = historial.slice(0, 50);
     localStorage.setItem('backupHistory', JSON.stringify(historial));
     cargarHistorial();
 }
 
 function obtenerHistorial() {
-    try {
-        return JSON.parse(localStorage.getItem('backupHistory')) || [];
-    } catch {
-        return [];
-    }
-}
-
-function descargarHistorial() {
-    window.open('/admin/backup', '_blank');
+    try { return JSON.parse(localStorage.getItem('backupHistory')) || []; } catch { return []; }
 }
 
 function eliminarHistorial(index) {
-    if (confirm('¿Eliminar este registro del historial?')) {
+    if (confirm('¿Eliminar este registro?')) {
         let historial = obtenerHistorial();
         historial.splice(index, 1);
         localStorage.setItem('backupHistory', JSON.stringify(historial));
@@ -398,10 +323,9 @@ function eliminarHistorial(index) {
 }
 
 function vaciarHistorial() {
-    if (confirm('¿Vaciar todo el historial de respaldos?')) {
+    if (confirm('¿Vaciar todo el historial?')) {
         localStorage.removeItem('backupHistory');
         cargarHistorial();
-        mostrarNotificacion('Historial vaciado', 'info');
     }
 }
 
@@ -412,24 +336,9 @@ async function cargarVentas(periodo) {
     
     try {
         const response = await fetch(`/api/admin/sales/${periodo}`);
-        if (!response.ok) {
-            throw new Error(`Error ${response.status}: ${response.statusText}`);
-        }
         const data = await response.json();
-        console.log(`📊 Ventas (${periodo}):`, data);
-        
-        // Asegurar que porMetodo y ultimasVentas sean arrays
         const porMetodo = Array.isArray(data.porMetodo) ? data.porMetodo : [];
         const ultimasVentas = Array.isArray(data.ultimasVentas) ? data.ultimasVentas : [];
-        
-        if (data.totalVentas === 0 && ultimasVentas.length === 0) {
-            contentDiv.innerHTML = `
-                <div class="alert alert-info text-center">
-                    No hay ventas registradas en este período
-                </div>
-            `;
-            return;
-        }
         
         contentDiv.innerHTML = `
             <div class="row g-3">
@@ -443,13 +352,13 @@ async function cargarVentas(periodo) {
                 </div>
                 <div class="col-md-6">
                     <div class="admin-card">
-                        <h6>💳 Por Método de Pago</h6>
+                        <h6>💳 Por Método</h6>
                         ${porMetodo.length > 0 ? porMetodo.map(m => `
                             <div class="d-flex justify-content-between border-bottom py-1">
-                                <span>${m.metodo_pago || 'Sin método'}</span>
-                                <span><strong>$${(m.total || 0).toFixed(2)}</strong> (${m.cantidad || 0} ventas)</span>
+                                <span>${m.metodo_pago}</span>
+                                <span><strong>$${(m.total || 0).toFixed(2)}</strong> (${m.cantidad || 0})</span>
                             </div>
-                        `).join('') : '<p class="text-muted">No hay ventas por método</p>'}
+                        `).join('') : '<p class="text-muted">Sin datos</p>'}
                     </div>
                 </div>
                 <div class="col-12">
@@ -457,60 +366,23 @@ async function cargarVentas(periodo) {
                         <h6>📋 Últimas ventas</h6>
                         ${ultimasVentas.length > 0 ? ultimasVentas.map(v => `
                             <div class="d-flex justify-content-between border-bottom py-1 small">
-                                <span>${v.order_number || v.id || 'N/A'}</span>
+                                <span>${v.order_number || v.id}</span>
                                 <span>${v.cliente || 'Cliente'}</span>
                                 <span>$${(v.total || 0).toFixed(2)}</span>
                                 <span>${v.metodo_pago || 'N/A'}</span>
                                 <span class="text-muted">${v.created_at ? new Date(v.created_at).toLocaleDateString() : 'N/A'}</span>
                             </div>
-                        `).join('') : '<p class="text-muted">No hay ventas recientes</p>'}
+                        `).join('') : '<p class="text-muted">Sin ventas</p>'}
                     </div>
                 </div>
             </div>
         `;
     } catch (error) {
-        console.error('Error cargando ventas:', error);
-        contentDiv.innerHTML = `
-            <div class="alert alert-danger">
-                ❌ Error al cargar ventas: ${error.message}
-                <br><button class="btn btn-sm btn-outline-danger mt-2" onclick="cargarVentas('${periodo}')">Reintentar</button>
-            </div>
-        `;
+        contentDiv.innerHTML = `<div class="alert alert-danger">❌ Error: ${error.message}</div>`;
     }
 }
-
-// ==================== NOTIFICACIONES ====================
-function mostrarNotificacion(mensaje, tipo) {
-    const div = document.createElement('div');
-    div.className = `alert alert-${tipo} position-fixed top-0 end-0 m-3 shadow`;
-    div.style.zIndex = '9999';
-    div.style.minWidth = '300px';
-    div.innerHTML = mensaje;
-    document.body.appendChild(div);
-    const audio = document.getElementById('notificacion');
-    audio.play().catch(() => {});
-    setTimeout(() => div.remove(), 4000);
-}
-
-// ==================== INICIO ====================
-document.addEventListener('DOMContentLoaded', () => {
-    console.log('🛡️ Panel de Administración cargado');
-    if (sessionStorage.getItem('adminAuth') === 'true') {
-        document.getElementById('passwordOverlay').style.display = 'none';
-        document.getElementById('adminContent').style.display = 'block';
-        cargarDashboard();
-        cargarProductos();
-        cargarBackupInfo();
-        configurarDropZone();
-        cargarHistorial();
-    }
-});
 
 // ==================== CONSUMIBLES ====================
-let consumibleModal = null;
-let compraModal = null;
-let consumiblesList = [];
-
 async function cargarConsumibles() {
     try {
         const response = await fetch('/api/consumibles');
@@ -518,8 +390,10 @@ async function cargarConsumibles() {
         consumiblesList = consumibles;
         
         const container = document.getElementById('listaConsumibles');
+        if (!container) return;
+        
         if (!consumibles || consumibles.length === 0) {
-            container.innerHTML = '<div class="col-12 text-center text-muted p-5">No hay consumibles registrados. Agrega el primero.</div>';
+            container.innerHTML = '<div class="col-12 text-center text-muted p-5">No hay consumibles registrados.</div>';
             return;
         }
         
@@ -539,15 +413,9 @@ async function cargarConsumibles() {
                                     </div>
                                 </div>
                                 <div>
-                                    <button class="btn btn-sm btn-info" onclick="abrirCompra(${c.id})" title="Agregar stock">
-                                        <i class="fas fa-plus"></i>
-                                    </button>
-                                    <button class="btn btn-sm btn-primary" onclick="editarConsumible(${c.id})" title="Editar">
-                                        <i class="fas fa-edit"></i>
-                                    </button>
-                                    <button class="btn btn-sm btn-danger" onclick="eliminarConsumible(${c.id})" title="Eliminar">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
+                                    <button class="btn btn-sm btn-info" onclick="abrirCompra(${c.id})" title="Agregar stock"><i class="fas fa-plus"></i></button>
+                                    <button class="btn btn-sm btn-primary" onclick="editarConsumible(${c.id})" title="Editar"><i class="fas fa-edit"></i></button>
+                                    <button class="btn btn-sm btn-danger" onclick="eliminarConsumible(${c.id})" title="Eliminar"><i class="fas fa-trash"></i></button>
                                 </div>
                             </div>
                         </div>
@@ -556,12 +424,8 @@ async function cargarConsumibles() {
             `;
         }).join('');
         
-        // Cargar alertas
         cargarAlertasConsumibles();
-        
-    } catch (error) {
-        console.error('Error cargando consumibles:', error);
-    }
+    } catch (error) { console.error('Error:', error); }
 }
 
 async function cargarAlertasConsumibles() {
@@ -586,9 +450,7 @@ async function cargarAlertasConsumibles() {
                 </button>
             </div>
         `;
-    } catch (error) {
-        console.error('Error cargando alertas:', error);
-    }
+    } catch (error) { console.error('Error:', error); }
 }
 
 function mostrarModalConsumible() {
@@ -608,7 +470,6 @@ function mostrarModalConsumible() {
 function editarConsumible(id) {
     const c = consumiblesList.find(x => x.id === id);
     if (!c) return;
-    
     document.getElementById('consumibleModalTitle').innerText = '✏️ Editar Consumible';
     document.getElementById('editConsumibleId').value = c.id;
     document.getElementById('editConsumibleNombre').value = c.nombre;
@@ -643,23 +504,18 @@ async function guardarConsumible() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ nombre, unidad, stock_actual, stock_minimo })
         });
-        
         const data = await response.json();
         if (data.success) {
             mostrarNotificacion('✅ Consumible guardado', 'success');
             consumibleModal.hide();
             cargarConsumibles();
         }
-    } catch (error) {
-        console.error('Error:', error);
-        mostrarNotificacion('❌ Error al guardar', 'danger');
-    }
+    } catch (error) { mostrarNotificacion('❌ Error', 'danger'); }
 }
 
 function abrirCompra(id) {
     const c = consumiblesList.find(x => x.id === id);
     if (!c) return;
-    
     document.getElementById('compraConsumibleId').value = c.id;
     document.getElementById('compraNombre').innerText = c.nombre;
     document.getElementById('compraStockActual').innerText = `${c.stock_actual} ${c.unidad}`;
@@ -681,103 +537,59 @@ async function agregarStockConsumible() {
     }
     
     try {
-        const response = await fetch(`/api/consumibles/${id}/agregar-stock`, {
+        await fetch(`/api/consumibles/${id}/agregar-stock`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ cantidad })
         });
-        
-        const data = await response.json();
-        if (data.success) {
-            mostrarNotificacion(`✅ Stock actualizado (+${cantidad})`, 'success');
-            compraModal.hide();
-            cargarConsumibles();
-        }
-    } catch (error) {
-        console.error('Error:', error);
-        mostrarNotificacion('❌ Error', 'danger');
-    }
+        mostrarNotificacion(`✅ Stock actualizado (+${cantidad})`, 'success');
+        compraModal.hide();
+        cargarConsumibles();
+    } catch (error) { mostrarNotificacion('❌ Error', 'danger'); }
 }
 
 async function eliminarConsumible(id) {
     if (!confirm('¿Eliminar este consumible?')) return;
-    
     try {
         await fetch(`/api/consumibles/${id}`, { method: 'DELETE' });
-        mostrarNotificacion('✅ Consumible eliminado', 'success');
+        mostrarNotificacion('✅ Eliminado', 'success');
         cargarConsumibles();
-    } catch (error) {
-        mostrarNotificacion('❌ Error', 'danger');
-    }
+    } catch (error) { mostrarNotificacion('❌ Error', 'danger'); }
 }
 
 async function notificarWhatsAppAlertas() {
     try {
         const response = await fetch('/api/consumibles/alertas');
         const alertas = await response.json();
-        
         if (alertas.length === 0) {
             mostrarNotificacion('✅ No hay alertas', 'success');
             return;
         }
-        
         let mensaje = `⚠️ ALERTA DE CONSUMIBLES - Matti's BBQ\n\n`;
         alertas.forEach(a => {
             mensaje += `📦 ${a.nombre}: ${a.stock_actual} ${a.unidad} (mínimo: ${a.stock_minimo})\n`;
         });
         mensaje += `\n🕐 ${new Date().toLocaleString()}`;
         
-        const res = await fetch('/api/test-whatsapp', {
+        await fetch('/api/test-whatsapp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ mensaje })
         });
-        
         mostrarNotificacion('📱 Notificación enviada', 'success');
-    } catch (error) {
-        console.error('Error:', error);
-        mostrarNotificacion('❌ Error al enviar', 'danger');
-    }
+    } catch (error) { mostrarNotificacion('❌ Error', 'danger'); }
 }
 
-// ==================== CARGAR AL CAMBIAR A TAB CONSUMIBLES ====================
-document.addEventListener('DOMContentLoaded', () => {
-    // Esperar a que el DOM esté listo
-    setTimeout(() => {
-        const consumiblesTab = document.getElementById('consumibles-tab');
-        if (consumiblesTab) {
-            consumiblesTab.addEventListener('shown.bs.tab', () => {
-                console.log('📦 Cargando consumibles...');
-                cargarConsumibles();
-            });
-        }
-    }, 500);
-});
-
-// Exponer funciones globales
-window.cargarConsumibles = cargarConsumibles;
-window.mostrarModalConsumible = mostrarModalConsumible;
-window.editarConsumible = editarConsumible;
-window.guardarConsumible = guardarConsumible;
-window.abrirCompra = abrirCompra;
-window.agregarStockConsumible = agregarStockConsumible;
-window.eliminarConsumible = eliminarConsumible;
-window.notificarWhatsAppAlertas = notificarWhatsAppAlertas;
-
-// ==================== RECETAS (CONSUMIBLES POR PRODUCTO) ====================
-let recetaModal = null;
-
-// Abrir modal de recetas para un producto
+// ==================== RECETAS ====================
 async function abrirReceta(productoId, productoNombre) {
     document.getElementById('recetaProductoId').value = productoId;
     document.getElementById('recetaProductoNombre').innerText = productoNombre;
     document.getElementById('recetaCantidad').value = 1;
+    document.getElementById('recetaTipoServicio').value = 'local';
     
-    // Cargar consumibles disponibles en el select
     await cargarSelectConsumibles();
-    
-    // Cargar receta actual
-    await cargarRecetaActual(productoId);
+    await cargarRecetaActual(productoId, 'local');
+    await cargarRecetaActual(productoId, 'llevar');
     
     if (!recetaModal) {
         recetaModal = new bootstrap.Modal(document.getElementById('recetaModal'));
@@ -785,26 +597,28 @@ async function abrirReceta(productoId, productoNombre) {
     recetaModal.show();
 }
 
-// Cargar lista de consumibles en el select
 async function cargarSelectConsumibles() {
     try {
         const response = await fetch('/api/consumibles');
         const consumibles = await response.json();
         const select = document.getElementById('recetaConsumibleSelect');
-        
         select.innerHTML = '<option value="">-- Seleccionar --</option>' +
             consumibles.map(c => `<option value="${c.id}">${c.nombre} (${c.stock_actual} ${c.unidad})</option>`).join('');
-    } catch (error) {
-        console.error('Error cargando consumibles:', error);
-    }
+    } catch (error) { console.error('Error:', error); }
 }
 
-// Cargar receta actual del producto
-async function cargarRecetaActual(productoId) {
+async function cargarRecetaActual(productoId, tipo_servicio) {
     try {
-        const response = await fetch(`/api/recetas/${productoId}`);
+        const response = await fetch(`/api/recetas/${productoId}?tipo_servicio=${tipo_servicio}`);
         const recetas = await response.json();
-        const container = document.getElementById('recetaListaActual');
+        
+        const containerId = tipo_servicio === 'local' ? 'recetaListaLocal' : 'recetaListaLlevar';
+        const container = document.getElementById(containerId);
+        
+        if (!container) {
+            console.error('❌ No existe:', containerId);
+            return;
+        }
         
         if (!recetas || recetas.length === 0) {
             container.innerHTML = '<div class="text-muted text-center p-3">Sin consumibles asignados</div>';
@@ -822,16 +636,14 @@ async function cargarRecetaActual(productoId) {
                 </button>
             </div>
         `).join('');
-    } catch (error) {
-        console.error('Error cargando receta:', error);
-    }
+    } catch (error) { console.error('Error:', error); }
 }
 
-// Agregar consumible a la receta
 async function agregarConsumibleAReceta() {
     const productoId = document.getElementById('recetaProductoId').value;
     const consumibleId = document.getElementById('recetaConsumibleSelect').value;
     const cantidad = parseInt(document.getElementById('recetaCantidad').value) || 1;
+    const tipo_servicio = document.getElementById('recetaTipoServicio').value;
     
     if (!consumibleId) {
         mostrarNotificacion('⚠️ Selecciona un consumible', 'warning');
@@ -845,38 +657,83 @@ async function agregarConsumibleAReceta() {
             body: JSON.stringify({
                 producto_id: parseInt(productoId),
                 consumible_id: parseInt(consumibleId),
-                cantidad: cantidad
+                cantidad: cantidad,
+                tipo_servicio: tipo_servicio
             })
         });
         
         const data = await response.json();
+        console.log('✅ Respuesta:', data);
+        
         if (data.success) {
-            mostrarNotificacion('✅ Consumible agregado a la receta', 'success');
+            const label = tipo_servicio === 'local' ? '🍽️ Local' : '🥡 Llevar';
+            mostrarNotificacion(`✅ Agregado (${label})`, 'success');
             document.getElementById('recetaConsumibleSelect').value = '';
             document.getElementById('recetaCantidad').value = 1;
-            cargarRecetaActual(productoId);
+            cargarRecetaActual(productoId, tipo_servicio);
         }
-    } catch (error) {
-        console.error('Error:', error);
-        mostrarNotificacion('❌ Error al agregar', 'danger');
-    }
+    } catch (error) { mostrarNotificacion('❌ Error', 'danger'); }
 }
 
-// Eliminar consumible de la receta
 async function eliminarReceta(recetaId, productoId) {
     if (!confirm('¿Quitar este consumible de la receta?')) return;
-    
     try {
         await fetch(`/api/recetas/${recetaId}`, { method: 'DELETE' });
-        mostrarNotificacion('✅ Consumible eliminado de la receta', 'success');
-        cargarRecetaActual(productoId);
-    } catch (error) {
-        console.error('Error:', error);
-        mostrarNotificacion('❌ Error', 'danger');
-    }
+        mostrarNotificacion('✅ Eliminado', 'success');
+        cargarRecetaActual(productoId, 'local');
+        cargarRecetaActual(productoId, 'llevar');
+    } catch (error) { mostrarNotificacion('❌ Error', 'danger'); }
 }
 
-// Exponer funciones globales
+// ==================== NOTIFICACIONES ====================
+function mostrarNotificacion(mensaje, tipo) {
+    const div = document.createElement('div');
+    div.className = `alert alert-${tipo} position-fixed top-0 end-0 m-3 shadow`;
+    div.style.zIndex = '9999';
+    div.innerHTML = mensaje;
+    document.body.appendChild(div);
+    const audio = document.getElementById('notificacion');
+    audio.play().catch(() => {});
+    setTimeout(() => div.remove(), 4000);
+}
+
+// ==================== INICIO ====================
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('🛡️ Panel de Administración cargado');
+    if (sessionStorage.getItem('adminAuth') === 'true') {
+        document.getElementById('passwordOverlay').style.display = 'none';
+        document.getElementById('adminContent').style.display = 'block';
+        cargarDashboard();
+        cargarProductos();
+        cargarBackupInfo();
+        configurarDropZone();
+        cargarHistorial();
+        cargarConsumibles();
+    }
+});
+
+// ==================== EXPONER FUNCIONES ====================
+window.verificarPassword = verificarPassword;
+window.cargarDashboard = cargarDashboard;
+window.cargarProductos = cargarProductos;
+window.mostrarModalProducto = mostrarModalProducto;
+window.editarProducto = editarProducto;
+window.guardarProducto = guardarProducto;
+window.eliminarProducto = eliminarProducto;
+window.crearRespaldo = crearRespaldo;
+window.restaurarRespaldo = restaurarRespaldo;
+window.cargarHistorial = cargarHistorial;
+window.eliminarHistorial = eliminarHistorial;
+window.vaciarHistorial = vaciarHistorial;
+window.cargarVentas = cargarVentas;
+window.cargarConsumibles = cargarConsumibles;
+window.mostrarModalConsumible = mostrarModalConsumible;
+window.editarConsumible = editarConsumible;
+window.guardarConsumible = guardarConsumible;
+window.abrirCompra = abrirCompra;
+window.agregarStockConsumible = agregarStockConsumible;
+window.eliminarConsumible = eliminarConsumible;
+window.notificarWhatsAppAlertas = notificarWhatsAppAlertas;
 window.abrirReceta = abrirReceta;
 window.agregarConsumibleAReceta = agregarConsumibleAReceta;
 window.eliminarReceta = eliminarReceta;
