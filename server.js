@@ -613,6 +613,113 @@ app.get('/api/init-tipo-servicio', (req, res) => {
     });
 });
 
+// Obtener productos disponibles para editar orden
+app.get('/api/orders/:id/edit-products', (req, res) => {
+    db.all('SELECT id, nombre, precio, stock, imagen FROM products WHERE activo = 1 AND stock > 0 ORDER BY nombre', (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+// Agregar productos a una orden y reactivarla si estaba preparada
+app.put('/api/orders/:id/add-items', (req, res) => {
+    const { id } = req.params;
+    const { nuevosItems } = req.body;
+    
+    if (!nuevosItems || nuevosItems.length === 0) {
+        return res.status(400).json({ error: 'Sin productos para agregar' });
+    }
+    
+    // Obtener la orden actual
+    db.get('SELECT * FROM orders WHERE id = ?', [id], (err, order) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!order) return res.status(404).json({ error: 'Orden no encontrada' });
+        
+        // Calcular nuevo total
+        let totalAgregado = 0;
+        nuevosItems.forEach(item => {
+            totalAgregado += item.precio * item.cantidad;
+        });
+        const nuevoTotal = order.total + totalAgregado;
+        
+        // Insertar cada producto nuevo
+        let insertados = 0;
+        nuevosItems.forEach(item => {
+            db.run(
+                `INSERT INTO order_items (order_id, product_id, nombre_producto, cantidad, precio_unitario, subtotal)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                [id, item.id, item.nombre, item.cantidad, item.precio, item.precio * item.cantidad],
+                (err) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    
+                    // Descontar stock del producto
+                    db.run('UPDATE products SET stock = stock - ? WHERE id = ?', [item.cantidad, item.id]);
+                    
+                    // Descontar consumibles según tipo_orden
+                    db.all(`
+                        SELECT r.consumible_id, r.cantidad as cant_por_unidad, c.nombre, c.stock_actual, c.stock_minimo, c.unidad
+                        FROM recetas_consumibles r
+                        JOIN consumibles c ON c.id = r.consumible_id
+                        WHERE r.producto_id = ? AND r.tipo_servicio = ?
+                    `, [item.id, order.tipo_orden], (errC, recetas) => {
+                        if (!errC && recetas && recetas.length > 0) {
+                            recetas.forEach(receta => {
+                                const cantidadTotal = receta.cant_por_unidad * item.cantidad;
+                                db.run(
+                                    'UPDATE consumibles SET stock_actual = stock_actual - ? WHERE id = ?',
+                                    [cantidadTotal, receta.consumible_id]
+                                );
+                                
+                                const nuevoStock = receta.stock_actual - cantidadTotal;
+                                if (nuevoStock <= receta.stock_minimo) {
+                                    const mensaje = `⚠️ ALERTA CONSUMIBLE BAJO\n\n📦 ${receta.nombre}\n📊 Stock: ${nuevoStock} ${receta.unidad}\n⚠️ Mínimo: ${receta.stock_minimo}`;
+                                    io.emit('consumible-alerta', {
+                                        id: receta.consumible_id,
+                                        nombre: receta.nombre,
+                                        stock_actual: nuevoStock,
+                                        stock_minimo: receta.stock_minimo
+                                    });
+                                    enviarWhatsApp(mensaje);
+                                }
+                            });
+                        }
+                    });
+                    
+                    insertados++;
+                    if (insertados === nuevosItems.length) {
+                        // Actualizar total y reactivar la orden
+                        db.run(
+                            `UPDATE orders SET total = ?, estado = 'pendiente', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                            [nuevoTotal, id],
+                            function(err) {
+                                if (err) return res.status(500).json({ error: err.message });
+                                
+                                console.log(`✅ Orden ${id} actualizada con ${nuevosItems.length} productos nuevos. Total: $${nuevoTotal}`);
+                                
+                                // Notificar a cocina por WebSocket
+                                io.emit('orden-actualizada', { 
+                                    orderId: id, 
+                                    nuevoTotal,
+                                    reactivada: true 
+                                });
+                                
+                                // Notificar a cocina que hay orden nueva
+                                io.emit('nueva-orden', { id: id });
+                                
+                                res.json({ 
+                                    success: true, 
+                                    nuevoTotal,
+                                    message: `Se agregaron ${nuevosItems.length} productos. La orden vuelve a cocina.`
+                                });
+                            }
+                        );
+                    }
+                }
+            );
+        });
+    });
+});
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🔥 Servidor en http://${getLocalIp()}:${PORT}`);
 });
