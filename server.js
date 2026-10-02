@@ -7,8 +7,8 @@ const axios = require('axios');
 const db = require('./server/database_server/database.js');
 
 // ==================== CONFIGURACIÓN WHATSAPP ====================
-const ADMIN_WHATSAPP = '+5214461179650'; // ⚠️ CAMBIAR
-const CALLMEBOT_API_KEY = '8504698'; // ⚠️ CAMBIAR
+const ADMIN_WHATSAPP = '+5218771467862'; // ⚠️ CAMBIAR
+const CALLMEBOT_API_KEY = '2371231'; // ⚠️ CAMBIAR
 
 async function enviarWhatsApp(mensaje) {
     if (ADMIN_WHATSAPP === '+521234567890') {
@@ -177,45 +177,43 @@ app.post('/api/orders', (req, res) => {
               // Descontar stock del producto
               db.run('UPDATE products SET stock = stock - ? WHERE id = ?', [item.cantidad, item.id]);
               
-// 🔥 DESCONTAR CONSUMIBLES SEGÚN TIPO DE ORDEN
-console.log(`🔍 Buscando recetas: producto_id=${item.id}, tipo_servicio=${tipo_orden}`);
-db.all(`
-    SELECT r.consumible_id, r.cantidad as cant_por_unidad, c.nombre, c.stock_actual, c.stock_minimo, c.unidad
-    FROM recetas_consumibles r
-    JOIN consumibles c ON c.id = r.consumible_id
-    WHERE r.producto_id = ? AND r.tipo_servicio = ?
-`, [item.id, tipo_orden], (errC, recetas) => {
-    if (errC) {
-        console.error('❌ Error buscando recetas:', errC.message);
-        return;
-    }
-    console.log(`📦 Recetas encontradas: ${recetas ? recetas.length : 0}`);
-    if (recetas && recetas.length > 0) {
-        console.log('📋 Detalle:', JSON.stringify(recetas));
-    }
-    if (!errC && recetas && recetas.length > 0) {
-        recetas.forEach(receta => {
-            const cantidadTotal = receta.cant_por_unidad * item.cantidad;
-            console.log(`✅ Descontando: ${receta.nombre} x${cantidadTotal}`);
-            db.run(
-                'UPDATE consumibles SET stock_actual = stock_actual - ? WHERE id = ?',
-                [cantidadTotal, receta.consumible_id]
-            );
-            
-            const nuevoStock = receta.stock_actual - cantidadTotal;
-            if (nuevoStock <= receta.stock_minimo) {
-                const mensaje = `⚠️ ALERTA CONSUMIBLE BAJO\n\n📦 ${receta.nombre}\n📊 Stock: ${nuevoStock} ${receta.unidad}\n⚠️ Mínimo: ${receta.stock_minimo}\n🕐 ${new Date().toLocaleString()}`;
-                io.emit('consumible-alerta', {
-                    id: receta.consumible_id,
-                    nombre: receta.nombre,
-                    stock_actual: nuevoStock,
-                    stock_minimo: receta.stock_minimo
+              // ✅ DESCONTAR CONSUMIBLES SI YA ESTÁ PAGADO
+              if (estado_inicial === 'pagado' && item.id) {
+                console.log(`🔥 [POST] Descontando consumibles: producto ${item.id}, tipo ${tipo_orden}`);
+                db.all(`
+                  SELECT r.consumible_id, r.cantidad as cant_por_unidad, c.nombre, c.stock_actual, c.stock_minimo, c.unidad
+                  FROM recetas_consumibles r
+                  JOIN consumibles c ON c.id = r.consumible_id
+                  WHERE r.producto_id = ? AND r.tipo_servicio = ?
+                `, [item.id, tipo_orden], (errC, recetas) => {
+                  if (errC) {
+                    console.error('❌ Error buscando recetas:', errC.message);
+                    return;
+                  }
+                  if (recetas && recetas.length > 0) {
+                    recetas.forEach(receta => {
+                      const cantidadTotal = receta.cant_por_unidad * item.cantidad;
+                      console.log(`✅ Descontando: ${receta.nombre} x${cantidadTotal}`);
+                      db.run(
+                        'UPDATE consumibles SET stock_actual = stock_actual - ? WHERE id = ?',
+                        [cantidadTotal, receta.consumible_id]
+                      );
+                      
+                      const nuevoStock = receta.stock_actual - cantidadTotal;
+                      if (nuevoStock <= receta.stock_minimo) {
+                        const mensaje = `⚠️ ALERTA CONSUMIBLE BAJO\n\n📦 ${receta.nombre}\n📊 Stock: ${nuevoStock} ${receta.unidad}\n⚠️ Mínimo: ${receta.stock_minimo}\n🕐 ${new Date().toLocaleString()}`;
+                        io.emit('consumible-alerta', {
+                          id: receta.consumible_id,
+                          nombre: receta.nombre,
+                          stock_actual: nuevoStock,
+                          stock_minimo: receta.stock_minimo
+                        });
+                        enviarWhatsApp(mensaje);
+                      }
+                    });
+                  }
                 });
-                enviarWhatsApp(mensaje);
-            }
-        });
-    }
-});
+              }
               
               insertados++;
               if (insertados === items.length) {
@@ -232,7 +230,6 @@ db.all(`
     );
   });
 });
-
 app.get('/api/orders/kitchen', (req, res) => {
   db.all(`
     SELECT o.*, 
@@ -282,20 +279,90 @@ app.get('/api/orders/:id', (req, res) => {
 
 app.put('/api/orders/:id', (req, res) => {
   const { id } = req.params;
-  const { estado, metodo_pago, total_usd } = req.body;
-  console.log(`[PUT] Orden ${id} -> estado: ${estado}`);
-  let sql = 'UPDATE orders SET estado = ?, updated_at = CURRENT_TIMESTAMP';
-  let params = [estado];
-  if (metodo_pago) { sql += ', metodo_pago = ?'; params.push(metodo_pago); }
-  if (total_usd !== undefined) { sql += ', total_usd = ?'; params.push(total_usd); }
-  sql += ' WHERE id = ?';
-  params.push(id);
-
-  db.run(sql, params, function(err) {
+  const { estado, metodo_pago, total_usd, tipo_orden } = req.body;
+  console.log(`[PUT] Orden ${id} -> estado: ${estado}, tipo_orden: ${tipo_orden || 'sin cambio'}`);
+  
+  // Primero obtener la orden completa
+  db.get('SELECT * FROM orders WHERE id = ?', [id], (err, order) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (this.changes === 0) return res.status(404).json({ error: 'Orden no encontrada' });
-    io.emit('estado-actualizado', { orderId: id, estado });
-    res.json({ success: true });
+    if (!order) return res.status(404).json({ error: 'Orden no encontrada' });
+    
+    // Usar tipo_orden del request si viene, si no, el de la orden
+    const tipoOrdenFinal = tipo_orden || order.tipo_orden;
+    
+    let sql = 'UPDATE orders SET estado = ?, updated_at = CURRENT_TIMESTAMP';
+    let params = [estado];
+    if (metodo_pago) { sql += ', metodo_pago = ?'; params.push(metodo_pago); }
+    if (total_usd !== undefined) { sql += ', total_usd = ?'; params.push(total_usd); }
+    if (tipo_orden) { sql += ', tipo_orden = ?'; params.push(tipo_orden); } // ← Actualizar tipo_orden
+    sql += ' WHERE id = ?';
+    params.push(id);
+
+    db.run(sql, params, function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Orden no encontrada' });
+      
+      console.log(`✅ Orden ${id} actualizada a ${estado}, tipo: ${tipoOrdenFinal}`);
+      
+      // 🔥 DESCONTAR CONSUMIBLES SOLO AL PAGAR
+      if (estado === 'pagado') {
+        console.log(`🔥 Descontando consumibles para orden ${id} (tipo: ${tipoOrdenFinal})`);
+        
+        db.all('SELECT * FROM order_items WHERE order_id = ?', [id], (err, items) => {
+          if (err) {
+            console.error('Error obteniendo items:', err);
+            return;
+          }
+          
+          console.log(`📦 Items en la orden: ${items.length}`);
+          
+          items.forEach(item => {
+            if (!item.product_id) return; // Ignorar extras
+            
+            db.all(`
+              SELECT r.consumible_id, r.cantidad as cant_por_unidad, c.nombre, c.stock_actual, c.stock_minimo, c.unidad
+              FROM recetas_consumibles r
+              JOIN consumibles c ON c.id = r.consumible_id
+              WHERE r.producto_id = ? AND r.tipo_servicio = ?
+            `, [item.product_id, tipoOrdenFinal], (errC, recetas) => {
+              if (errC) {
+                console.error('Error buscando recetas:', errC.message);
+                return;
+              }
+              
+              console.log(`📦 Producto ${item.product_id} tipo ${tipoOrdenFinal}: ${recetas ? recetas.length : 0} recetas`);
+              
+              if (recetas && recetas.length > 0) {
+                recetas.forEach(receta => {
+                  const cantidadTotal = receta.cant_por_unidad * item.cantidad;
+                  console.log(`✅ Descontando: ${receta.nombre} x${cantidadTotal}`);
+                  
+                  db.run(
+                    'UPDATE consumibles SET stock_actual = stock_actual - ? WHERE id = ?',
+                    [cantidadTotal, receta.consumible_id]
+                  );
+                  
+                  const nuevoStock = receta.stock_actual - cantidadTotal;
+                  if (nuevoStock <= receta.stock_minimo) {
+                    const mensaje = `⚠️ ALERTA CONSUMIBLE BAJO\n\n📦 ${receta.nombre}\n📊 Stock: ${nuevoStock} ${receta.unidad}\n⚠️ Mínimo: ${receta.stock_minimo}\n🕐 ${new Date().toLocaleString()}`;
+                    io.emit('consumible-alerta', {
+                      id: receta.consumible_id,
+                      nombre: receta.nombre,
+                      stock_actual: nuevoStock,
+                      stock_minimo: receta.stock_minimo
+                    });
+                    enviarWhatsApp(mensaje);
+                  }
+                });
+              }
+            });
+          });
+        });
+      }
+      
+      io.emit('estado-actualizado', { orderId: id, estado });
+      res.json({ success: true });
+    });
   });
 });
 

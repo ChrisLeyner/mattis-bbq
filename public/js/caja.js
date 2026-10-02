@@ -498,7 +498,6 @@ async function cargarOrdenAlCarrito(orderId) {
         const response = await fetch(`/api/orders/${orderId}`);
         const order = await response.json();
         if (order) {
-            // Guardar el ID de la orden pendiente
             window.ordenSeleccionada = orderId;
             
             limpiarCarrito();
@@ -514,6 +513,14 @@ async function cargarOrdenAlCarrito(orderId) {
             });
             window.carrito = carrito;
             document.getElementById('cliente').value = order.cliente;
+            
+            // ✅ NUEVO: Establecer el tipo_orden en el selector
+            const tipoOrdenSelect = document.getElementById('tipoOrden');
+            if (tipoOrdenSelect && order.tipo_orden) {
+                tipoOrdenSelect.value = order.tipo_orden;
+                console.log(`📋 Tipo de orden cargado: ${order.tipo_orden}`);
+            }
+            
             actualizarCarrito();
             mostrarSeccion('ventas');
             cargarOrdenesPendientesCobro();
@@ -563,20 +570,28 @@ async function procesarPago() {
     }
 
     try {
-        if (ordenSeleccionada) {
-            // Cobrar orden existente (desde la sección de cobros pendientes)
-            console.log(`Cobrando orden existente ${ordenSeleccionada}`);
-            let metodoReal = metodoPago;
-            let total_usd = 0;
-            if (metodoReal === 'USD') {
-                total_usd = parseFloat(document.getElementById('input-recibido-usd')?.value) || 0;
-                metodoReal = 'Dólares';
-            }
-            const response = await fetch(`/api/orders/${ordenSeleccionada}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ estado: 'pagado', metodo_pago: metodoReal, total_usd })
-            });
+       if (ordenSeleccionada) {
+    console.log(`Cobrando orden existente ${ordenSeleccionada}`);
+    let metodoReal = metodoPago;
+    let total_usd = 0;
+    if (metodoReal === 'USD') {
+        total_usd = parseFloat(document.getElementById('input-recibido-usd')?.value) || 0;
+        metodoReal = 'Dólares';
+    }
+    
+    // ✅ NUEVO: Obtener tipo_orden del selector
+    const tipoOrden = document.getElementById('tipoOrden')?.value || 'local';
+    
+    const response = await fetch(`/api/orders/${ordenSeleccionada}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            estado: 'pagado', 
+            metodo_pago: metodoReal, 
+            total_usd,
+            tipo_orden: tipoOrden  // ← Enviar tipo_orden
+        })
+    });
             const data = await response.json();
             if (response.ok && data.success) {
                 mostrarNotificacion(`✅ Orden ${ordenSeleccionada} pagada con ${metodoPago}`, 'success');
@@ -858,13 +873,17 @@ async function confirmarPagoDividido() {
     
     const cliente = document.getElementById('cliente').value.trim();
     
+    // ✅ Leer tipo_orden del selector
+    const tipoOrden = document.getElementById('tipoOrden')?.value || 'local';
+    console.log(`📋 Tipo de orden para pago dividido: ${tipoOrden}`);
+    
     try {
         document.getElementById('btnConfirmarDividir').disabled = true;
         mostrarNotificacion('⏳ Procesando pago dividido...', 'info');
         
         let orderId = ordenSeleccionada;
         
-        // Si es venta nueva, crear la orden primero
+        // Si es venta nueva, crear la orden primero con estado PENDIENTE
         if (!orderId) {
             const response = await fetch('/api/orders', {
                 method: 'POST',
@@ -874,14 +893,15 @@ async function confirmarPagoDividido() {
                     items: carrito,
                     total: totalDividir,
                     metodo_pago: 'Dividido',
-                    tipo_orden: 'llevar',
-                    estado_inicial: 'pagado',
+                    tipo_orden: tipoOrden,
+                    estado_inicial: 'pendiente',  // ✅ Cambio: crear como pendiente
                     total_usd: 0
                 })
             });
             const result = await response.json();
             if (!result.success) throw new Error('Error creando orden');
             orderId = result.order.id;
+            console.log(`✅ Orden ${orderId} creada como pendiente`);
         }
         
         // Registrar cada pago
@@ -899,11 +919,17 @@ async function confirmarPagoDividido() {
             });
         }
         
-        // Marcar la orden como pagada
+        // ✅ Marcar la orden como pagada CON tipo_orden
+        // Esto dispara el descuento de consumibles en el backend
+        console.log(`💰 Marcando orden ${orderId} como pagada (tipo: ${tipoOrden})`);
         await fetch(`/api/orders/${orderId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ estado: 'pagado', metodo_pago: 'Dividido' })
+            body: JSON.stringify({ 
+                estado: 'pagado', 
+                metodo_pago: 'Dividido',
+                tipo_orden: tipoOrden  // ✅ Enviar tipo_orden para el descuento
+            })
         });
         
         mostrarNotificacion('✅ Pago dividido registrado correctamente', 'success');

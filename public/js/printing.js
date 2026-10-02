@@ -631,6 +631,7 @@ async function cobrarConTicket() {
     
     localStorage.setItem('ticketData', JSON.stringify(ticketData));
     
+    // ✅ Si es orden pendiente, primero marcarla como pagada CON tipo_orden
     if (window.ordenSeleccionada) {
         console.log(`💰 Cobrando orden pendiente ID: ${window.ordenSeleccionada}`);
         
@@ -643,19 +644,24 @@ async function cobrarConTicket() {
                 metodoReal = 'Dólares';
             }
             
+            // 🔥 NUEVO: Obtener tipo_orden del selector
+            const tipoOrdenFinal = document.getElementById('tipoOrden')?.value || 'local';
+            console.log(`📋 Tipo de orden: ${tipoOrdenFinal}`);
+            
             const response = await fetch(`/api/orders/${window.ordenSeleccionada}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     estado: 'pagado',
                     metodo_pago: metodoReal,
-                    total_usd: total_usd
+                    total_usd: total_usd,
+                    tipo_orden: tipoOrdenFinal  // ✅ Enviar tipo_orden
                 })
             });
             const data = await response.json();
             
             if (response.ok && data.success) {
-                console.log(`✅ Orden ${window.ordenSeleccionada} marcada como pagada`);
+                console.log(`✅ Orden ${window.ordenSeleccionada} marcada como pagada con tipo: ${tipoOrdenFinal}`);
                 
                 if (typeof window.cargarCobrosPendientes === 'function') {
                     setTimeout(() => window.cargarCobrosPendientes(), 500);
@@ -667,12 +673,40 @@ async function cobrarConTicket() {
                         estado: 'pagado' 
                     });
                 }
+                
+                // ⚠️ IMPORTANTE: Saltarse procesarPago para órdenes existentes
+                // porque ya se marcó como pagada aquí
+                
+                // Guardar carrito para imprimir
+                const savedTicket = JSON.parse(localStorage.getItem('ticketData') || 'null');
+                if (savedTicket) {
+                    window.carrito = savedTicket.carrito;
+                    document.getElementById('cliente').value = savedTicket.cliente;
+                }
+                
+                // Imprimir ticket
+                const impreso = await imprimirTicketAutomatico();
+                localStorage.removeItem('ticketData');
+                
+                if (impreso) {
+                    await abrirCajaDespuesDeCobro();
+                }
+                
+                // Limpiar
+                if (typeof window.limpiarCarrito === 'function') {
+                    window.limpiarCarrito();
+                }
+                
+                window.ordenSeleccionada = null;
+                console.log('🧹 Limpieza completa después de cobrar');
+                return impreso;
             }
         } catch (error) {
             console.error('Error al cobrar orden pendiente:', error);
         }
     }
     
+    // Ventas directas (no órdenes pendientes) siguen el flujo normal
     if (typeof window.procesarPago === 'function') {
         await window.procesarPago();
     } else {
@@ -692,7 +726,6 @@ async function cobrarConTicket() {
     }
     
     const impreso = await imprimirTicketAutomatico();
-    
     localStorage.removeItem('ticketData');
     
     if (impreso) {
@@ -701,29 +734,10 @@ async function cobrarConTicket() {
     
     if (typeof window.limpiarCarrito === 'function') {
         window.limpiarCarrito();
-        console.log('🧹 Carrito y campos limpiados después de imprimir');
-    } else {
-        window.carrito = [];
-        const clienteInput = document.getElementById('cliente');
-        if (clienteInput) clienteInput.value = '';
-        const cartItems = document.getElementById('cartItems');
-        if (cartItems) cartItems.innerHTML = '<p class="text-muted text-center">Carrito vacío</p>';
-        const totalSpan = document.getElementById('cartTotal');
-        if (totalSpan) totalSpan.innerText = '$0.00';
-        
-        const inputRecibido = document.getElementById('input-recibido');
-        if (inputRecibido) inputRecibido.value = '';
-        const inputRecibidoUsd = document.getElementById('input-recibido-usd');
-        if (inputRecibidoUsd) inputRecibidoUsd.value = '';
-        const labelCambio = document.getElementById('label-cambio');
-        if (labelCambio) labelCambio.innerText = '$0.00';
-        const cambioSpan = document.getElementById('cambio');
-        if (cambioSpan) cambioSpan.innerText = '$0.00';
+        console.log('🧹 Carrito limpiado después de imprimir');
     }
     
     window.ordenSeleccionada = null;
-    
-    console.log('🧹 Limpieza completa después de cobrar');
     return impreso;
 }
 
