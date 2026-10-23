@@ -433,78 +433,101 @@ const fs = require('fs');
 
 app.post('/api/cash/close', (req, res) => {
   console.log('🔒 Cierre de turno');
+  
   db.get(`SELECT * FROM cash_register WHERE estado = 'abierta' ORDER BY fecha_apertura DESC LIMIT 1`, (err, turno) => {
     if (err || !turno) return res.status(400).json({ error: 'No hay turno abierto' });
 
+    // 1. Obtener las ventas de la tabla orders (las órdenes pagadas)
     db.all(`
-      SELECT metodo_pago, SUM(monto) as total_mxn, 0 as total_usd
-      FROM order_payments WHERE created_at >= ?
+      SELECT metodo_pago, SUM(total) as total_mxn, SUM(total_usd) as total_usd
+      FROM orders 
+      WHERE datetime(created_at) >= datetime(?) AND estado = 'pagado'
       GROUP BY metodo_pago
     `, [turno.fecha_apertura], (err, ventasPorMetodo) => {
       if (err) {
-        db.all(`
-          SELECT metodo_pago, SUM(total) as total_mxn, SUM(total_usd) as total_usd
-          FROM orders WHERE created_at >= ? AND estado = 'pagado'
-          GROUP BY metodo_pago
-        `, [turno.fecha_apertura], (err2, ventasFallback) => {
-          if (err2) return res.status(500).json({ error: err2.message });
-          generarPDF(turno, ventasFallback || []);
-        });
-        return;
+        console.error('❌ Error buscando ventas:', err);
+        return res.status(500).json({ error: err.message });
       }
-      generarPDF(turno, ventasPorMetodo || []);
+
+      // 2. Obtener los pagos de la tabla order_payments (para pagos divididos)
+      db.all(`
+        SELECT metodo_pago, SUM(monto) as total_mxn
+        FROM order_payments 
+        WHERE datetime(created_at) >= datetime(?)
+        GROUP BY metodo_pago
+      `, [turno.fecha_apertura], (errP, pagosPorMetodo) => {
+        
+        let ventasEfectivo = 0, ventasTarjeta = 0, ventasTransferencia = 0, ventasDolaresMXN = 0, ventasDolaresUSD = 0;
+        
+        // Sumar ventas normales
+        if (ventasPorMetodo) {
+          ventasPorMetodo.forEach(v => {
+            if (v.metodo_pago === 'Efectivo') ventasEfectivo += v.total_mxn || 0;
+            else if (v.metodo_pago === 'Tarjeta') ventasTarjeta += v.total_mxn || 0;
+            else if (v.metodo_pago === 'Transferencia') ventasTransferencia += v.total_mxn || 0;
+            else if (v.metodo_pago === 'Dólares') { ventasDolaresMXN += v.total_mxn || 0; ventasDolaresUSD += v.total_usd || 0; }
+          });
+        }
+
+        // Sumar pagos divididos (si hay)
+        if (pagosPorMetodo && pagosPorMetodo.length > 0) {
+          pagosPorMetodo.forEach(p => {
+             if (p.metodo_pago === 'Efectivo') ventasEfectivo += p.total_mxn || 0;
+             else if (p.metodo_pago === 'Tarjeta') ventasTarjeta += p.total_mxn || 0;
+             else if (p.metodo_pago === 'Transferencia') ventasTransferencia += p.total_mxn || 0;
+             else if (p.metodo_pago === 'Dólares') ventasDolaresMXN += p.total_mxn || 0;
+          });
+        }
+        
+        const totalVendidoMXN = ventasEfectivo + ventasTarjeta + ventasTransferencia + ventasDolaresMXN;
+        const efectivoEnCajaMXN = turno.fondo_inicial + ventasEfectivo;
+
+        const datosCierre = {
+          fondoInicial: turno.fondo_inicial,
+          ventasEfectivo, ventasTarjeta, ventasTransferencia, ventasDolaresUSD, ventasDolaresMXN,
+          totalVendidoMXN, efectivoEnCajaMXN,
+          fechaApertura: turno.fecha_apertura,
+          fechaCierre: new Date().toISOString()
+        };
+
+        // 3. Generar el PDF
+        const doc = new PDFDocument({ margin: 50 });
+        const buffers = [];
+        doc.on('data', buffers.push.bind(buffers));
+        doc.on('end', () => {
+          const pdfData = Buffer.concat(buffers);
+          
+          // Actualizar el turno como cerrado
+          db.run(`UPDATE cash_register SET estado = 'cerrada', fecha_cierre = datetime('now', 'localtime'), fondo_final = ? WHERE id = ?`,
+            [efectivoEnCajaMXN, turno.id], (err) => {
+              if (err) console.error('Error cerrando turno:', err);
+            });
+            
+          res.json({ success: true, pdf: pdfData.toString('base64'), cierre: datosCierre });
+        });
+
+        doc.fontSize(20).text('MATTI\'S B-B-Q', { align: 'center' });
+        doc.moveDown();
+        doc.fontSize(16).text('REPORTE DE CIERRE DE CAJA', { align: 'center' });
+        doc.moveDown();
+        doc.fontSize(10).text(`Apertura: ${new Date(turno.fecha_apertura).toLocaleString()}`, { align: 'center' });
+        doc.text(`Cierre: ${new Date().toLocaleString()}`, { align: 'center' });
+        doc.moveDown();
+
+        doc.fontSize(12).text('Resumen de ventas:', { underline: true });
+        doc.text(`Fondo inicial: $${turno.fondo_inicial.toFixed(2)} MXN`);
+        doc.text(`Ventas en efectivo: $${ventasEfectivo.toFixed(2)} MXN`);
+        doc.text(`Ventas con tarjeta: $${ventasTarjeta.toFixed(2)} MXN`);
+        doc.text(`Ventas por transferencia: $${ventasTransferencia.toFixed(2)} MXN`);
+        doc.text(`Ventas en dólares: $${ventasDolaresUSD.toFixed(2)} USD (equivalente a $${ventasDolaresMXN.toFixed(2)} MXN)`);
+        doc.moveDown();
+        doc.text(`TOTAL VENDIDO: $${totalVendidoMXN.toFixed(2)}`, { bold: true });
+        doc.moveDown();
+        doc.fontSize(14).text(`EFECTIVO EN CAJA: $${efectivoEnCajaMXN.toFixed(2)}`, { bold: true });
+        doc.end();
+      });
     });
   });
-  
-  function generarPDF(turno, ventasPorMetodo) {
-    let ventasEfectivo = 0, ventasTarjeta = 0, ventasTransferencia = 0, ventasDolaresMXN = 0, ventasDolaresUSD = 0;
-    ventasPorMetodo.forEach(v => {
-      if (v.metodo_pago === 'Efectivo') ventasEfectivo = v.total_mxn || 0;
-      else if (v.metodo_pago === 'Tarjeta') ventasTarjeta = v.total_mxn || 0;
-      else if (v.metodo_pago === 'Transferencia') ventasTransferencia = v.total_mxn || 0;
-      else if (v.metodo_pago === 'Dólares') { ventasDolaresMXN = v.total_mxn || 0; ventasDolaresUSD = v.total_usd || 0; }
-    });
-    
-    const totalVendidoMXN = ventasEfectivo + ventasTarjeta + ventasTransferencia + ventasDolaresMXN;
-    const efectivoEnCajaMXN = turno.fondo_inicial + ventasEfectivo;
-
-    const datosCierre = {
-      fondoInicial: turno.fondo_inicial, ventasEfectivo, ventasTarjeta, ventasTransferencia,
-      ventasDolaresUSD, ventasDolaresMXN, totalVendidoMXN, efectivoEnCajaMXN,
-      fechaApertura: turno.fecha_apertura, fechaCierre: new Date().toISOString()
-    };
-
-    const doc = new PDFDocument({ margin: 50 });
-    const buffers = [];
-    doc.on('data', buffers.push.bind(buffers));
-    doc.on('end', () => {
-      const pdfData = Buffer.concat(buffers);
-      db.run(`UPDATE cash_register SET estado = 'cerrada', fecha_cierre = datetime('now', 'localtime'), fondo_final = ? WHERE id = ?`,
-        [efectivoEnCajaMXN, turno.id], (err) => {
-          if (err) console.error('Error cerrando turno:', err);
-        });
-      res.json({ success: true, pdf: pdfData.toString('base64'), cierre: datosCierre });
-    });
-
-    doc.fontSize(20).text('MATTI\'S B-B-Q', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(16).text('REPORTE DE CIERRE DE CAJA', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(10).text(`Apertura: ${new Date(turno.fecha_apertura).toLocaleString()}`, { align: 'center' });
-    doc.text(`Cierre: ${new Date().toLocaleString()}`, { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(12).text('Resumen de ventas:', { underline: true });
-    doc.text(`Fondo inicial: $${turno.fondo_inicial.toFixed(2)} MXN`);
-    doc.text(`Ventas en efectivo: $${ventasEfectivo.toFixed(2)} MXN`);
-    doc.text(`Ventas con tarjeta: $${ventasTarjeta.toFixed(2)} MXN`);
-    doc.text(`Ventas por transferencia: $${ventasTransferencia.toFixed(2)} MXN`);
-    doc.text(`Ventas en dólares: $${ventasDolaresUSD.toFixed(2)} USD`);
-    doc.moveDown();
-    doc.text(`TOTAL VENDIDO: $${totalVendidoMXN.toFixed(2)}`, { bold: true });
-    doc.moveDown();
-    doc.fontSize(14).text(`EFECTIVO EN CAJA: $${efectivoEnCajaMXN.toFixed(2)}`, { bold: true });
-    doc.end();
-  }
 });
 
 // ==================== PAGOS DIVIDIDOS ====================
